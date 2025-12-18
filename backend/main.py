@@ -9,9 +9,13 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 import asyncio
+from dotenv import load_dotenv
+import os
 
 from kalshi_client import KalshiClient, calculate_market_heat, categorize_market
 from news_matcher import fetch_all_news, match_news_to_market, group_markets_by_topic, NewsArticle
+
+load_dotenv()
 
 app = FastAPI(
     title="Kalshi News Tracker",
@@ -61,7 +65,8 @@ class MarketWithNews(BaseModel):
 
 async def refresh_cache():
     """Refresh cached data from Kalshi and news sources."""
-    client = KalshiClient()
+    api_key = os.getenv("KALSHI_API_KEY")
+    client = KalshiClient(api_key=api_key)
     try:
         # Fetch markets
         markets = await client.get_all_open_markets(max_markets=300)
