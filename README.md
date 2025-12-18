@@ -1,8 +1,8 @@
-# Kalshi Pulse
+# Grave Research
 
 **Prediction markets meet the news cycle.** Track what stories are generating the most attention on Kalshi prediction markets, and see relevant news coverage alongside market activity.
 
-![Kalshi Pulse](https://via.placeholder.com/800x400/0a0a0f/22d3ee?text=Kalshi+Pulse)
+![Grave Research](https://via.placeholder.com/800x400/0a0a0f/22d3ee?text=Grave+Research)
 
 ## Features
 
