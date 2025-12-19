@@ -104,14 +104,17 @@ function App() {
     return '#7ec8e3';
   };
 
+  const APP_TITLE_FIRST = "GRAVE";
+  const APP_TITLE_SECOND = "RESEARCH";
+
   return (
     <div style={styles.container}>
       {/* Header */}
       <header style={styles.header}>
         <div style={styles.headerLeft}>
           <h1 style={styles.logo}>
-            <span style={styles.logoK}>K</span>ALSHI
-            <span style={styles.logoAccent}>PULSE</span>
+            <span style={styles.logoK}>{APP_TITLE_FIRST}</span>
+            <span style={styles.logoAccent}>{APP_TITLE_SECOND}</span>
           </h1>
           <p style={styles.tagline}>Prediction markets meet the news cycle</p>
         </div>
@@ -166,6 +169,9 @@ function App() {
       {/* Footer */}
       <footer style={styles.footer}>
         <p>Data from Kalshi prediction markets • News from major RSS feeds • Not financial advice</p>
+        <p style={{ fontSize: '11px', color: '#3f3f46', marginTop: '8px' }}>
+          * "Hot Score" is calculated based on market volume, recent activity, and relevance to breaking news.
+        </p>
       </footer>
     </div>
   );
@@ -210,14 +216,16 @@ function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor }) {
                 {market.related_news.slice(0, 2).map((news, nIdx) => (
                   <div key={nIdx} style={styles.newsItem}>
                     <span style={styles.newsSource}>{news.source}</span>
-                    <p style={styles.newsTitle}>{news.title}</p>
+                    <a href={news.link} target="_blank" rel="noopener noreferrer" style={styles.newsLink}>
+                      <p style={styles.newsTitle}>{news.title}</p>
+                    </a>
                   </div>
                 ))}
               </div>
             )}
 
             <a
-              href={`https://kalshi.com/markets/${market.ticker}`}
+              href={`https://kalshi.com/markets/${market.event_ticker || market.ticker}`}
               target="_blank"
               rel="noopener noreferrer"
               style={styles.viewLink}
@@ -501,6 +509,10 @@ const styles = {
     display: 'block',
     marginBottom: '10px',
   },
+  newsLink: {
+    textDecoration: 'none',
+    cursor: 'pointer',
+  },
   newsItem: {
     marginBottom: '10px',
   },
@@ -514,6 +526,10 @@ const styles = {
     color: '#a1a1aa',
     margin: '2px 0 0 0',
     lineHeight: 1.4,
+    transition: 'color 0.2s',
+  },
+  newsLinkHover: {
+    color: '#e4e4e7',
   },
   viewLink: {
     display: 'block',

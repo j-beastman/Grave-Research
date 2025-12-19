@@ -3,4 +3,7 @@ uvicorn==0.27.0
 httpx==0.26.0
 pydantic==2.5.3
 python-dotenv==1.0.0
-feedparser==6.0.10
+feedparser
+sqlalchemy[asyncio]>=2.0
+asyncpg
+pydantic-settings

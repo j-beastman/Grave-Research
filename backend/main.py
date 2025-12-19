@@ -17,10 +17,27 @@ from news_matcher import fetch_all_news, match_news_to_market, group_markets_by_
 
 load_dotenv()
 
+from contextlib import asynccontextmanager
+from database import init_db
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize database
+    try:
+        print("Initializing database tables...")
+        await init_db()
+        print("Database initialized successfully.")
+    except Exception as e:
+        print(f"WARNING: Database initialization failed: {e}")
+        print("Running in stateless mode (no persistence).")
+    
+    yield
+
 app = FastAPI(
     title="Kalshi News Tracker",
     description="Track prediction market activity alongside relevant news",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS for frontend
@@ -72,9 +89,29 @@ async def refresh_cache():
         markets = await client.get_all_open_markets(max_markets=300)
         
         # Add heat scores and categories
-        for market in markets:
+        raw_markets = markets
+        markets = []
+        
+        # Deduplicate by title, keeping highest heat score
+        markets_by_title = {}
+        
+        for market in raw_markets:
             market["heat_score"] = calculate_market_heat(market)
             market["category"] = categorize_market(market)
+            
+            # Use yes_sub_title as subtitle if subtitle is missing (common in multi-outcome markets)
+            if not market.get("subtitle") and market.get("yes_sub_title"):
+                market["subtitle"] = market.get("yes_sub_title")
+            
+            title = market.get("title")
+            if title not in markets_by_title:
+                markets_by_title[title] = market
+            else:
+                # Keep the "hottest" variant (e.g. most active candidate)
+                if market["heat_score"] > markets_by_title[title]["heat_score"]:
+                    markets_by_title[title] = market
+        
+        markets = list(markets_by_title.values())
         
         # Fetch news
         news = await fetch_all_news()
@@ -250,10 +287,12 @@ async def get_hot_markets(limit: int = 20):
         
         scored_markets.append({
             "ticker": market["ticker"],
+            "event_ticker": market.get("event_ticker"),
             "title": market["title"],
             "category": market.get("category"),
             "yes_price": market.get("yes_price", 50),
             "volume": market.get("volume", 0),
+            "open_interest": market.get("open_interest", 0),
             "heat_score": round(market.get("heat_score", 0), 2),
             "news_score": round(news_score, 2),
             "combined_score": round(combined_score, 2),

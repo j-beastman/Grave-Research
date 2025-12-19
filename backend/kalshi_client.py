@@ -8,6 +8,7 @@ import os
 import time
 import json
 import logging
+import asyncio
 from typing import Optional, Dict, List, Any
 
 logger = logging.getLogger(__name__)
@@ -42,24 +43,42 @@ class KalshiClient:
         if self.api_key:
             headers["KALSHI-ACCESS-KEY"] = self.api_key
 
-        try:
-            response = await self.client.request(
-                method=method,
-                url=url,
-                headers=headers,
-                params=params,
-                json=json_data
-            )
-            
-            response.raise_for_status()
-            return response.json()
-            
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error {e.response.status_code} for {endpoint}: {e.response.text}")
-            raise
-        except Exception as e:
-            logger.error(f"API request failed for {endpoint}: {e}")
-            raise
+        # Retry config
+        max_retries = 3
+        backoff_factor = 1.0
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self.client.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    params=params,
+                    json=json_data
+                )
+                
+                response.raise_for_status()
+                return response.json()
+                
+            except httpx.HTTPStatusError as e:
+                # If we hit a rate limit and haven't exhausted retries
+                if e.response.status_code == 429 and attempt < max_retries:
+                    sleep_time = backoff_factor * (2 ** attempt) # Exponential backoff
+                    logger.warning(f"Rate limit hit for {endpoint}. Retrying in {sleep_time}s...")
+                    await asyncio.sleep(sleep_time)
+                    continue
+                
+                logger.error(f"HTTP error {e.response.status_code} for {endpoint}: {e.response.text}")
+                raise
+            except Exception as e:
+                # For network errors, we could also retry, but let's stick to 429 for now
+                if attempt < max_retries and isinstance(e, (httpx.RequestError, httpx.ConnectTimeout)):
+                     logger.warning(f"Network error for {endpoint}. Retrying...")
+                     await asyncio.sleep(1)
+                     continue
+                     
+                logger.error(f"API request failed for {endpoint}: {e}")
+                raise
 
     async def get_markets(
         self,
@@ -91,13 +110,21 @@ class KalshiClient:
         cursor = None
 
         while len(all_markets) < max_markets:
-            data = await self.get_markets(status="open", limit=200, cursor=cursor)
-            markets = data.get("markets", [])
-            if not markets:
-                break
-            all_markets.extend(markets)
-            cursor = data.get("cursor")
-            if not cursor:
+            try:
+                data = await self.get_markets(status="open", limit=200, cursor=cursor)
+                markets = data.get("markets", [])
+                if not markets:
+                    break
+                all_markets.extend(markets)
+                cursor = data.get("cursor")
+                if not cursor:
+                    break
+                
+                # Rate limit prevention: Sleep between pages
+                await asyncio.sleep(0.3)
+                
+            except Exception as e:
+                logger.error(f"Error fetching page of markets: {e}")
                 break
 
         return all_markets[:max_markets]

@@ -31,7 +31,7 @@ NEWS_FEEDS = {
         ("The Hill", "https://thehill.com/feed/"),
     ],
     "economy": [
-        ("WSJ Markets", "https://feeds.a]wsj.com/rss/RSSMarketsMain.xml"),
+        ("WSJ Markets", "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain"),
         ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
         ("Bloomberg", "https://feeds.bloomberg.com/markets/news.rss"),
     ],
