@@ -81,9 +81,8 @@ class Market(Base):
 class MarketSnapshot(Base):
     __tablename__ = "market_snapshots"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    market_ticker: Mapped[str] = mapped_column(ForeignKey("markets.ticker"))
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    market_ticker: Mapped[str] = mapped_column(ForeignKey("markets.ticker"), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, primary_key=True)
     
     yes_bid: Mapped[Optional[int]] = mapped_column(Integer)
     yes_ask: Mapped[Optional[int]] = mapped_column(Integer)
@@ -98,9 +97,8 @@ class MarketSnapshot(Base):
     # Relationships
     market: Mapped["Market"] = relationship(back_populates="snapshots")
 
-    __table_args__ = (
-        Index("idx_snapshot_market_time", "market_ticker", "timestamp"),
-    )
+    # Composite PK acts as index on (market_ticker, timestamp)
+    __table_args__ = ()
 
 class NewsArticle(Base):
     __tablename__ = "news_articles"

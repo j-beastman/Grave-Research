@@ -138,14 +138,41 @@ class KalshiClient:
         """Fetch details for a specific event."""
         return await self._request("GET", f"/events/{event_ticker}")
 
-    async def get_events(self, status: str = "open", limit: int = 200, cursor: str = None) -> List[dict]:
-        """Fetch a list of events from the API."""
+    async def get_events(self, status: str = "open", limit: int = 200, cursor: str = None) -> dict:
+        """Fetch a page of events from the API."""
         params = {"status": status, "limit": limit}
         if cursor:
             params["cursor"] = cursor
             
-        response = await self._request("GET", "/events", params=params)
-        return response.get("events", [])
+        return await self._request("GET", "/events", params=params)
+
+    async def get_all_events(self, status: str = "open", max_events: int = 1000) -> List[dict]:
+        """Fetch all events with pagination."""
+        all_events = []
+        cursor = None
+        
+        while len(all_events) < max_events:
+            try:
+                response = await self.get_events(status=status, limit=200, cursor=cursor)
+                events = response.get("events", [])
+                
+                if not events:
+                    break
+                    
+                all_events.extend(events)
+                cursor = response.get("cursor")
+                
+                if not cursor:
+                    break
+                
+                # Rate limit prevention
+                await asyncio.sleep(0.3)
+                
+            except Exception as e:
+                logger.error(f"Error fetching page of events: {e}")
+                break
+                
+        return all_events[:max_events]
 
     async def get_series(self, series_ticker: str) -> dict:
         """Fetch details for a specific series."""

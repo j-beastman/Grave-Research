@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
         print("Database initialized successfully.")
         
         # Start ingestion task
-        asyncio.create_task(background_ingestion_loop())
+        asyncio.create_task(background_ingestion_loop()) 
         
     except Exception as e:
         print(f"WARNING: Database initialization failed: {e}")

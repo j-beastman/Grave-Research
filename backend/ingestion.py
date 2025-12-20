@@ -13,7 +13,6 @@ from database import (
 )
 from database import retention
 
-from ingestion import ingest_kalshi_data
 from embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
