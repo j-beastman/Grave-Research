@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, and_
+from sqlalchemy import select, update, delete, func, and_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .models import Base, Series, Event, Market, MarketSnapshot, NewsArticle, ArticleEventLink
