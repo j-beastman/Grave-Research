@@ -138,6 +138,15 @@ class KalshiClient:
         """Fetch details for a specific event."""
         return await self._request("GET", f"/events/{event_ticker}")
 
+    async def get_events(self, status: str = "open", limit: int = 200, cursor: str = None) -> List[dict]:
+        """Fetch a list of events from the API."""
+        params = {"status": status, "limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+            
+        response = await self._request("GET", "/events", params=params)
+        return response.get("events", [])
+
     async def get_series(self, series_ticker: str) -> dict:
         """Fetch details for a specific series."""
         return await self._request("GET", f"/series/{series_ticker}")

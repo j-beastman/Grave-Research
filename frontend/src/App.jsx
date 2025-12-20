@@ -2,52 +2,52 @@ import { useState, useEffect } from 'react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
-// Mock data for demo when API isn't available
-const MOCK_DATA = {
-  topics: [
-    {
-      name: 'Politics', market_count: 45, total_volume: 2500000, total_heat: 89.5, top_markets: [
-        { ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028 presidential election', yes_price: 34, volume: 450000, heat_score: 12.4 },
-        { ticker: 'SENATE-GA', title: 'Republicans win Georgia Senate seat', yes_price: 62, volume: 180000, heat_score: 8.7 },
-      ]
-    },
-    {
-      name: 'Economy', market_count: 32, total_volume: 1800000, total_heat: 72.3, top_markets: [
-        { ticker: 'FED-DEC-25', title: 'Fed cuts rates in December 2025', yes_price: 78, volume: 320000, heat_score: 11.2 },
-        { ticker: 'RECESSION-2026', title: 'US recession by end of 2026', yes_price: 28, volume: 250000, heat_score: 9.1 },
-      ]
-    },
-    {
-      name: 'Technology', market_count: 18, total_volume: 950000, total_heat: 45.2, top_markets: [
-        { ticker: 'OPENAI-IPO', title: 'OpenAI IPO by 2026', yes_price: 45, volume: 180000, heat_score: 7.8 },
-      ]
-    },
-    {
-      name: 'Sports', market_count: 28, total_volume: 720000, total_heat: 38.9, top_markets: [
-        { ticker: 'SB-2026', title: 'Chiefs win Super Bowl 2026', yes_price: 18, volume: 95000, heat_score: 5.2 },
-      ]
-    },
-  ],
-  hot_markets: [
-    {
-      ticker: 'FED-DEC-25', title: 'Fed cuts rates at December meeting', category: 'Economy', yes_price: 78, volume: 320000, heat_score: 11.2, combined_score: 18.4, related_news: [
-        { title: 'Fed officials signal openness to rate cuts amid cooling inflation', source: 'Reuters', relevance_score: 0.82 },
-        { title: 'Markets price in 80% chance of December rate cut', source: 'CNBC', relevance_score: 0.75 },
-      ]
-    },
-    {
-      ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028', category: 'Politics', yes_price: 34, volume: 450000, heat_score: 12.4, combined_score: 16.8, related_news: [
-        { title: 'Early 2028 polling shows tight Democratic primary field', source: 'Politico', relevance_score: 0.68 },
-      ]
-    },
-    {
-      ticker: 'OPENAI-IPO', title: 'OpenAI announces IPO by end of 2026', category: 'Technology', yes_price: 45, volume: 180000, heat_score: 7.8, combined_score: 14.2, related_news: [
-        { title: 'OpenAI in talks for new funding round at $150B valuation', source: 'TechCrunch', relevance_score: 0.89 },
-        { title: 'Sam Altman discusses potential public offering timeline', source: 'The Verge', relevance_score: 0.71 },
-      ]
-    },
-  ]
-};
+// // Mock data for demo when API isn't available
+// const MOCK_DATA = {
+//   topics: [
+//     {
+//       name: 'Politics', market_count: 45, total_volume: 2500000, total_heat: 89.5, top_markets: [
+//         { ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028 presidential election', yes_price: 34, volume: 450000, heat_score: 12.4 },
+//         { ticker: 'SENATE-GA', title: 'Republicans win Georgia Senate seat', yes_price: 62, volume: 180000, heat_score: 8.7 },
+//       ]
+//     },
+//     {
+//       name: 'Economy', market_count: 32, total_volume: 1800000, total_heat: 72.3, top_markets: [
+//         { ticker: 'FED-DEC-25', title: 'Fed cuts rates in December 2025', yes_price: 78, volume: 320000, heat_score: 11.2 },
+//         { ticker: 'RECESSION-2026', title: 'US recession by end of 2026', yes_price: 28, volume: 250000, heat_score: 9.1 },
+//       ]
+//     },
+//     {
+//       name: 'Technology', market_count: 18, total_volume: 950000, total_heat: 45.2, top_markets: [
+//         { ticker: 'OPENAI-IPO', title: 'OpenAI IPO by 2026', yes_price: 45, volume: 180000, heat_score: 7.8 },
+//       ]
+//     },
+//     {
+//       name: 'Sports', market_count: 28, total_volume: 720000, total_heat: 38.9, top_markets: [
+//         { ticker: 'SB-2026', title: 'Chiefs win Super Bowl 2026', yes_price: 18, volume: 95000, heat_score: 5.2 },
+//       ]
+//     },
+//   ],
+//   hot_markets: [
+//     {
+//       ticker: 'FED-DEC-25', title: 'Fed cuts rates at December meeting', category: 'Economy', yes_price: 78, volume: 320000, heat_score: 11.2, combined_score: 18.4, related_news: [
+//         { title: 'Fed officials signal openness to rate cuts amid cooling inflation', source: 'Reuters', relevance_score: 0.82 },
+//         { title: 'Markets price in 80% chance of December rate cut', source: 'CNBC', relevance_score: 0.75 },
+//       ]
+//     },
+//     {
+//       ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028', category: 'Politics', yes_price: 34, volume: 450000, heat_score: 12.4, combined_score: 16.8, related_news: [
+//         { title: 'Early 2028 polling shows tight Democratic primary field', source: 'Politico', relevance_score: 0.68 },
+//       ]
+//     },
+//     {
+//       ticker: 'OPENAI-IPO', title: 'OpenAI announces IPO by end of 2026', category: 'Technology', yes_price: 45, volume: 180000, heat_score: 7.8, combined_score: 14.2, related_news: [
+//         { title: 'OpenAI in talks for new funding round at $150B valuation', source: 'TechCrunch', relevance_score: 0.89 },
+//         { title: 'Sam Altman discusses potential public offering timeline', source: 'The Verge', relevance_score: 0.71 },
+//       ]
+//     },
+//   ]
+// };
 
 function App() {
   const [activeTab, setActiveTab] = useState('hot');

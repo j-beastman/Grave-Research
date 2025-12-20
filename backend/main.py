@@ -19,6 +19,20 @@ load_dotenv()
 
 from contextlib import asynccontextmanager
 from database import init_db
+from ingestion import ingest_kalshi_data
+import asyncio
+
+async def background_ingestion_loop():
+    """Run ingestion every 10 minutes."""
+    while True:
+        try:
+            print("Starting background ingestion...")
+            await ingest_kalshi_data()
+            print("Ingestion complete.")
+        except Exception as e:
+            print(f"Ingestion error: {e}")
+        
+        await asyncio.sleep(600)  # 10 minutes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,6 +41,10 @@ async def lifespan(app: FastAPI):
         print("Initializing database tables...")
         await init_db()
         print("Database initialized successfully.")
+        
+        # Start ingestion task
+        asyncio.create_task(background_ingestion_loop())
+        
     except Exception as e:
         print(f"WARNING: Database initialization failed: {e}")
         print("Running in stateless mode (no persistence).")

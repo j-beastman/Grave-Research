@@ -7,3 +7,5 @@ feedparser
 sqlalchemy[asyncio]>=2.0
 asyncpg
 pydantic-settings
+pgvector
+fastembed

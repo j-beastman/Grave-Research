@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, ForeignKey, Text, Float, JSON, Index, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.sql import text
+from pgvector.sqlalchemy import Vector
 
 class Base(DeclarativeBase):
     pass
@@ -63,13 +63,11 @@ class Market(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Generated column for search (using raw SQL DDL later or manually updated? 
-    # SQLAlchemy supports Computed columns in newer versions, but specific PG TSVECTOR support is via TypeEngine.
-    # The prompt asked for `ALTER TABLE ... GENERATED ALWAYS`, so we might need a migration or raw SQL execution in init_db.
-    # We will declare it here if possible or just omit from ORM and manage via DB.
-    # For simplicity, we'll define a placeholder if needed, but the prompt's search implementation implies using `search_vector`.
-    # Let's try to verify if we need to map it. Usually not needed for insert, only for search query.)
+    # Generated column for search
     search_vector = mapped_column(TSVECTOR)
+    
+    # Vector embedding (384 dimensions for all-MiniLM-L6-v2)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(384))
 
     # Relationships
     event: Mapped["Event"] = relationship(back_populates="markets")
@@ -77,6 +75,7 @@ class Market(Base):
 
     __table_args__ = (
         Index("idx_markets_search", "search_vector", postgresql_using="gin"),
+        Index("idx_markets_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}),
     )
 
 class MarketSnapshot(Base):
@@ -115,9 +114,16 @@ class NewsArticle(Base):
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     content_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    
+    # Vector embedding
+    embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(384))
 
     # Relationships
     event_links: Mapped[List["ArticleEventLink"]] = relationship(back_populates="article")
+    
+    __table_args__ = (
+        Index("idx_news_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}),
+    )
 
 class ArticleEventLink(Base):
     __tablename__ = "article_event_links"

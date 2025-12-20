@@ -3,7 +3,29 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import text
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import text
+from embeddings import EmbeddingService
 from .models import Market
+
+async def search_markets_semantic(
+    session: AsyncSession,
+    query: str,
+    limit: int = 20
+) -> list[Market]:
+    """
+    Search markets using vector similarity (cosine distance).
+    """
+    embed_service = EmbeddingService.get_instance()
+    query_vector = embed_service.generate_one(query)
+    
+    stmt = select(Market).order_by(
+        Market.embedding.cosine_distance(query_vector)
+    ).limit(limit)
+    
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 async def search_markets(
     session: AsyncSession,

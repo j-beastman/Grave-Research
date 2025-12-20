@@ -13,6 +13,8 @@ from .connection import engine
 async def init_db() -> None:
     """Create all tables if they don't exist."""
     async with engine.begin() as conn:
+        # Enable pgvector extension
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
         
         # Create the generated column and index for search if needed via raw SQL?
