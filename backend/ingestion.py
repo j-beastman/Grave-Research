@@ -7,7 +7,7 @@ from kalshi_client import KalshiClient
 from news_matcher import fetch_all_news, match_news_to_market
 from database import (
     AsyncSessionLocal, 
-    upsert_event, upsert_market, upsert_article, 
+    upsert_series, upsert_event, upsert_market, upsert_article, 
     link_article_to_events, record_snapshots_bulk,
     upsert_markets_bulk
 )
@@ -30,41 +30,97 @@ async def ingest_kalshi_data():
     async with AsyncSessionLocal() as session:
         client = KalshiClient()
         try:
+            # 1. Fetch & Upsert Series/Events
+            logger.info("Fetching events...")
+            events = await client.get_all_events(max_events=200)
+            now = datetime.utcnow()
             
-            # 2. Fetch Markets
+            # Extract unique series
+            series_tickers = set(e.get("series_ticker") for e in events if e.get("series_ticker"))
+            for ticker in series_tickers:
+                await upsert_series(session, {
+                    "ticker": ticker, 
+                    "title": ticker, 
+                    "created_at": now, 
+                    "updated_at": now
+                })
+            await session.commit()
+            logger.info(f"Upserted {len(series_tickers)} series.")
+
+            db_events = []
+            for e in events:
+                db_events.append({
+                    "event_ticker": e["event_ticker"],
+                    "series_ticker": e.get("series_ticker"),
+                    "title": e.get("title"),
+                    "category": e.get("category"),
+                    "status": e.get("status"),
+                    "created_at": now,
+                    "updated_at": now
+                })
+            
+            for e_data in db_events:
+                await upsert_event(session, e_data)
+            await session.commit()
+            logger.info(f"Upserted {len(db_events)} events.")
+
+            # 2. Fetch & Upsert Markets
             logger.info("Fetching markets...")
-            markets = await client.get_all_open_markets(max_markets=1000)
+            markets = await client.get_all_open_markets(max_markets=300)
+            
+            # Upsert missing parent events first
+            market_event_tickers = set(m.get("event_ticker") for m in markets if m.get("event_ticker"))
+            logger.info(f"Checking {len(market_event_tickers)} event tickers from markets...")
+            for ticker in market_event_tickers:
+                try:
+                    await upsert_event(session, {
+                        "event_ticker": ticker, 
+                        "title": f"Event {ticker}",
+                        "created_at": now,
+                        "updated_at": now
+                    })
+                except Exception as e:
+                    logger.warning(f"Lazy event upsert failed for {ticker}: {e}")
+            await session.commit()
+            logger.info("Manual event upsert complete.")
             
             # Upsert markets
             db_markets = []
             snapshots = []
             now = datetime.utcnow()
             
-            # Batch embedding generation for markets?
-            # Creating list of texts
+            # Batch embedding generation for markets
             market_texts = [m["title"] for m in markets]
-            # Generate all at once
             logger.info(f"Generating embeddings for {len(markets)} markets...")
             market_embeddings = embed_service.generate(market_texts)
             
             for idx, m in enumerate(markets):
+                if not m.get("event_ticker"):
+                    logger.warning(f"Market {m['ticker']} has no event_ticker, skipping.")
+                    continue
+                
+                # Strip timezone from ISO strings for naive TIMESTAMP columns
+                def parse_dt(iso_str):
+                    if not iso_str: return None
+                    return datetime.fromisoformat(iso_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                    
                 db_markets.append({
                     "ticker": m["ticker"],
                     "event_ticker": m["event_ticker"],
                     "title": m["title"],
-                    "subtitle": m["subtitle"],
+                    "subtitle": m.get("subtitle", m.get("yes_sub_title")),
                     "yes_sub_title": m.get("yes_sub_title"),
                     "no_sub_title": m.get("no_sub_title"),
                     "market_type": m.get("market_type"),
                     "status": m["status"],
-                    "open_time": datetime.fromisoformat(m["open_time"].replace('Z', '+00:00')) if m.get("open_time") else None,
-                    "close_time": datetime.fromisoformat(m["close_time"].replace('Z', '+00:00')) if m.get("close_time") else None,
-                    "expiration_time": datetime.fromisoformat(m["expiration_time"].replace('Z', '+00:00')) if m.get("expiration_time") else None,
+                    "open_time": parse_dt(m.get("open_time")),
+                    "close_time": parse_dt(m.get("close_time")),
+                    "expiration_time": parse_dt(m.get("expiration_time")),
+                    "created_at": now,
                     "updated_at": now,
-                    "embedding": market_embeddings[idx] # Add embedding
+                    "embedding": market_embeddings[idx]
                 })
                 
-                # Snapshot data (same as before)
                 snapshots.append({
                     "market_ticker": m["ticker"],
                     "timestamp": now,
@@ -79,10 +135,24 @@ async def ingest_kalshi_data():
                 })
 
             if db_markets:
-                await upsert_markets_bulk(session, db_markets)
-                await record_snapshots_bulk(session, snapshots)
-                await session.commit()
-                logger.info(f"Upserted {len(db_markets)} markets and snapshots.")
+                logger.info(f"Attempting bulk upsert for {len(db_markets)} markets...")
+                try:
+                    await upsert_markets_bulk(session, db_markets)
+                    await record_snapshots_bulk(session, snapshots)
+                    await session.commit()
+                    logger.info(f"Successfully upserted markets and snapshots.")
+                except Exception as e:
+                    logger.error(f"Bulk market upsert failed: {e}")
+                    # Try item by item
+                    await session.rollback()
+                    logger.info("Retrying markets one-by-one...")
+                    for m_data in db_markets:
+                        try:
+                            await upsert_market(session, m_data)
+                            await session.commit()
+                        except Exception as m_e:
+                            logger.error(f"Failed to upsert market {m_data['ticker']}: {m_e}")
+                            await session.rollback()
 
             # 3. News Ingestion
             logger.info("Fetching news...")
@@ -94,24 +164,21 @@ async def ingest_kalshi_data():
             news_embeddings = embed_service.generate(news_texts)
             
             for idx, item in enumerate(news_items):
+                # Ensure published_at is naive if it's aware
+                pub_at = item.published
+                if pub_at and pub_at.tzinfo:
+                    pub_at = pub_at.replace(tzinfo=None)
+
                 # Upsert article
                 article = await upsert_article(session, {
                     "url": item.link,
                     "title": item.title,
                     "summary": item.summary,
                     "source": item.source,
-                    "published_at": item.published,
+                    "published_at": pub_at,
                     "fetched_at": now,
-                    "embedding": news_embeddings[idx] # Add embedding
+                    "embedding": news_embeddings[idx]
                 })
-                
-                # Match to markets/events?
-                # Using existing match logic on the python objects might be heavy.
-                # For now, let's store the article. 
-                # Linking logic: We can try to match against the *events* we just fetched.
-                # Simplistic keyword matching for now to populate links
-                # (Ideally we reuse news_matcher logic but adapted for DB objects)
-                pass 
                 
             await session.commit()
             

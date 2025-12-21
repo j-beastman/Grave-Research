@@ -1,5 +1,8 @@
-
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 class DatabaseSettings(BaseSettings):
     database_url: str = "postgresql://user:pass@localhost/dbname" # Default generic URL to avoid crash on init if missing

@@ -169,6 +169,13 @@ async def root():
             "/hot - Get the hottest markets right now",
         ]
     }
+}
+
+
+@app.get("/health")
+async def health_check():
+    """Health check for Railway."""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 
 @app.get("/topics")

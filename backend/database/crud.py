@@ -71,18 +71,13 @@ async def upsert_market(session: AsyncSession, market_data: dict) -> Market:
 
 async def upsert_markets_bulk(session: AsyncSession, markets: List[dict]) -> int:
     valid_keys = Market.__table__.columns.keys()
-    clean_markets = [{k: v for k, v in m.items() if k in valid_keys} for m in markets]
-    
-    if not clean_markets:
-        return 0
-        
-    stmt = pg_insert(Market).values(clean_markets)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=['ticker'],
-        set_={k: stmt.excluded[k] for k in clean_markets[0].keys() if k != 'ticker'}
-    )
-    result = await session.execute(stmt)
-    return result.rowcount
+    count = 0
+    for m in markets:
+        clean_data = {k: v for k, v in m.items() if k in valid_keys}
+        market = Market(**clean_data)
+        await session.merge(market)
+        count += 1
+    return count
 
 async def get_market(session: AsyncSession, ticker: str) -> Optional[Market]:
     return await session.get(Market, ticker)
@@ -107,17 +102,15 @@ async def record_snapshot(session: AsyncSession, market_ticker: str, snapshot_da
     return snapshot
 
 async def record_snapshots_bulk(session: AsyncSession, snapshots: List[dict]) -> int:
-    if not snapshots:
-        return 0
-    # Ensure timestamps
+    count = 0
     now = datetime.utcnow()
     for s in snapshots:
         if 'timestamp' not in s:
             s['timestamp'] = now
-            
-    stmt = pg_insert(MarketSnapshot).values(snapshots)
-    result = await session.execute(stmt)
-    return result.rowcount
+        snapshot = MarketSnapshot(**s)
+        session.add(snapshot)
+        count += 1
+    return count
 
 async def get_market_history(
     session: AsyncSession,

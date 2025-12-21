@@ -1,12 +1,11 @@
 
-from __future__ import annotations
 from datetime import datetime
-from typing import List, Optional
-import uuid
+from typing import List, Optional, Dict, Any
+from uuid import UUID, uuid4
 
-from sqlalchemy import Column, String, Integer, DateTime, Boolean, ForeignKey, Text, Float, JSON, Index, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TSVECTOR
+from sqlalchemy import String, DateTime, ForeignKey, Integer, Float, Text, Index, Computed
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import TSVECTOR, JSONB
 from pgvector.sqlalchemy import Vector
 
 class Base(DeclarativeBase):
@@ -17,10 +16,8 @@ class Series(Base):
 
     ticker: Mapped[str] = mapped_column(String(50), primary_key=True)
     title: Mapped[Optional[str]] = mapped_column(String(255))
-    category: Mapped[Optional[str]] = mapped_column(String(100))
-    frequency: Mapped[Optional[str]] = mapped_column(String(50))
-    tags: Mapped[Optional[dict]] = mapped_column(JSONB)
-    settlement_sources: Mapped[Optional[dict]] = mapped_column(JSONB)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -35,6 +32,7 @@ class Event(Base):
     title: Mapped[Optional[str]] = mapped_column(String(500))
     category: Mapped[Optional[str]] = mapped_column(String(100))
     status: Mapped[Optional[str]] = mapped_column(String(20))
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -64,9 +62,15 @@ class Market(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Generated column for search
-    search_vector = mapped_column(TSVECTOR)
+    search_vector = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('english', title || ' ' || coalesce(subtitle, ''))",
+            persisted=True
+        )
+    )
     
-    # Vector embedding (384 dimensions for all-MiniLM-L6-v2)
+    # Vector embedding
     embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(384))
 
     # Relationships
@@ -75,7 +79,7 @@ class Market(Base):
 
     __table_args__ = (
         Index("idx_markets_search", "search_vector", postgresql_using="gin"),
-        Index("idx_markets_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}),
+        Index("idx_markets_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_ops={"embedding": "vector_l2_ops"}),
     )
 
 class MarketSnapshot(Base):
@@ -97,40 +101,30 @@ class MarketSnapshot(Base):
     # Relationships
     market: Mapped["Market"] = relationship(back_populates="snapshots")
 
-    # Composite PK acts as index on (market_ticker, timestamp)
-    __table_args__ = ()
-
 class NewsArticle(Base):
     __tablename__ = "news_articles"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    url: Mapped[str] = mapped_column(String(2048), unique=True)
-    title: Mapped[str] = mapped_column(String(500))
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    url: Mapped[str] = mapped_column(String(512), unique=True)
+    title: Mapped[str] = mapped_column(Text)
     summary: Mapped[Optional[str]] = mapped_column(Text)
     source: Mapped[Optional[str]] = mapped_column(String(100))
-    
-    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    published_at: Mapped[datetime] = mapped_column(DateTime)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    content_hash: Mapped[Optional[str]] = mapped_column(String(64))
     
-    # Vector embedding
     embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(384))
 
-    # Relationships
-    event_links: Mapped[List["ArticleEventLink"]] = relationship(back_populates="article")
-    
     __table_args__ = (
-        Index("idx_news_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}),
+        Index("idx_news_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_ops={"embedding": "vector_l2_ops"}),
     )
 
 class ArticleEventLink(Base):
     __tablename__ = "article_event_links"
 
-    article_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("news_articles.id"), primary_key=True)
+    article_id: Mapped[UUID] = mapped_column(ForeignKey("news_articles.id"), primary_key=True)
     event_ticker: Mapped[str] = mapped_column(ForeignKey("events.event_ticker"), primary_key=True)
     relevance_score: Mapped[Optional[float]] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    matched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    article: Mapped["NewsArticle"] = relationship(back_populates="event_links")
     event: Mapped["Event"] = relationship(back_populates="article_links")
