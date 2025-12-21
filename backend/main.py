@@ -169,7 +169,6 @@ async def root():
             "/hot - Get the hottest markets right now",
         ]
     }
-}
 
 
 @app.get("/health")
