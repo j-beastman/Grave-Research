@@ -22,13 +22,14 @@ class DatabaseSettings(BaseSettings):
         elif url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
         
-        # Remove sslmode from URL - asyncpg doesn't recognize it
-        # SSL will be handled via connect_args in connection.py
+        # Remove parameters that asyncpg doesn't recognize
+        # (sslmode, channel_binding, etc. - SSL is handled via connect_args)
+        incompatible_params = {"sslmode", "channel_binding"}
         if "?" in url:
             base, params = url.split("?", 1)
-            # Filter out sslmode parameter
             filtered_params = "&".join(
-                p for p in params.split("&") if not p.startswith("sslmode=")
+                p for p in params.split("&") 
+                if not any(p.startswith(f"{param}=") for param in incompatible_params)
             )
             url = f"{base}?{filtered_params}" if filtered_params else base
         
