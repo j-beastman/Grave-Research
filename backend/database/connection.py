@@ -15,6 +15,7 @@ engine = create_async_engine(
     poolclass=NullPool,
     connect_args={
         "statement_cache_size": 0,
+        "ssl": True,
     },
 )
 

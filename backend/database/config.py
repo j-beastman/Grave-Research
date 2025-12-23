@@ -15,12 +15,23 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
-        """Convert postgres:// to postgresql+asyncpg://"""
+        """Convert postgres:// to postgresql+asyncpg:// and strip sslmode (asyncpg uses 'ssl')"""
         url = self.database_url
         if url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql+asyncpg://", 1)
         elif url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        
+        # Remove sslmode from URL - asyncpg doesn't recognize it
+        # SSL will be handled via connect_args in connection.py
+        if "?" in url:
+            base, params = url.split("?", 1)
+            # Filter out sslmode parameter
+            filtered_params = "&".join(
+                p for p in params.split("&") if not p.startswith("sslmode=")
+            )
+            url = f"{base}?{filtered_params}" if filtered_params else base
+        
         return url
 
 settings = DatabaseSettings()
