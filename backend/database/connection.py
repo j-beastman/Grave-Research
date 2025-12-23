@@ -17,6 +17,7 @@ engine = create_async_engine(
     poolclass=NullPool,  # Disable local pooling for serverless
     connect_args={
         "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
         "ssl": "require",
     },
 )
