@@ -6,11 +6,13 @@ from typing import AsyncGenerator
 from .config import settings
 
 # Create async engine
+# statement_cache_size=0 disables prepared statements for Supabase pooler compatibility
 engine = create_async_engine(
     settings.async_database_url,
     echo=settings.echo_sql,
     pool_size=settings.pool_size,
     max_overflow=settings.max_overflow,
+    connect_args={"statement_cache_size": 0},
 )
 
 # Create session factory
