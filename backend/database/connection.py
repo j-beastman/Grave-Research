@@ -1,18 +1,24 @@
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.pool import NullPool
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+import ssl
 
 from .config import settings
 
-# Create async engine
-# statement_cache_size=0 disables prepared statements for Supabase pooler compatibility
+# Create async engine optimized for Supabase/cloud poolers
+# - NullPool: Don't pool locally, let Supabase handle pooling
+# - statement_cache_size=0: Required for external connection poolers
+# - ssl=require: Required for Supabase connections
 engine = create_async_engine(
     settings.async_database_url,
     echo=settings.echo_sql,
-    pool_size=settings.pool_size,
-    max_overflow=settings.max_overflow,
-    connect_args={"statement_cache_size": 0},
+    poolclass=NullPool,  # Disable local pooling for serverless
+    connect_args={
+        "statement_cache_size": 0,
+        "ssl": "require",
+    },
 )
 
 # Create session factory
