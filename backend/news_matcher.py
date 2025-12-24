@@ -145,27 +145,42 @@ async def fetch_all_news() -> list[NewsArticle]:
     return all_articles
 
 
-def match_news_to_market(market: dict, articles: list[NewsArticle], max_matches: int = 5) -> list[dict]:
+def match_news_to_market(market: dict, articles: list, max_matches: int = 5) -> list[dict]:
     """
     Find news articles that are relevant to a given market.
     Returns a list of matched articles with relevance scores.
+    Accepts articles as either NewsArticle objects or dicts.
     """
     market_text = f"{market.get('title', '')} {market.get('subtitle', '')} {market.get('category', '')}"
     market_keywords = extract_keywords(market_text)
     
     matches = []
     for article in articles:
-        article_text = f"{article.title} {article.summary}"
+        # Handle both NewsArticle objects and dicts
+        if isinstance(article, dict):
+            title = article.get("title", "")
+            summary = article.get("summary", "")
+            link = article.get("link", "")
+            source = article.get("source", "")
+            published = article.get("published")
+        else:
+            title = article.title
+            summary = article.summary
+            link = article.link
+            source = article.source
+            published = article.published.isoformat() if article.published else None
+        
+        article_text = f"{title} {summary}"
         article_keywords = extract_keywords(article_text)
         
         score = calculate_relevance_score(market_keywords, article_keywords)
         
         if score > 0.15:  # Minimum relevance threshold
             matches.append({
-                "title": article.title,
-                "link": article.link,
-                "source": article.source,
-                "published": article.published.isoformat() if article.published else None,
+                "title": title,
+                "link": link,
+                "source": source,
+                "published": published if isinstance(published, str) else (published.isoformat() if published else None),
                 "relevance_score": round(score, 3),
             })
     
