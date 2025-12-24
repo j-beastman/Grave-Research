@@ -87,6 +87,57 @@ async def get_markets_by_event(session: AsyncSession, event_ticker: str) -> List
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
+async def get_all_markets(session: AsyncSession, status: Optional[str] = None, limit: int = 500) -> List[Market]:
+    """Get all markets, optionally filtered by status."""
+    stmt = select(Market)
+    if status:
+        stmt = stmt.where(Market.status == status)
+    stmt = stmt.order_by(Market.updated_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+async def get_all_articles(session: AsyncSession, limit: int = 100) -> List[NewsArticle]:
+    """Get all recent news articles."""
+    stmt = select(NewsArticle).order_by(NewsArticle.published_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+async def get_markets_with_snapshots(session: AsyncSession, limit: int = 300) -> List[dict]:
+    """Get markets with their latest snapshot data for API responses."""
+    # Get markets
+    markets_stmt = select(Market).order_by(Market.updated_at.desc()).limit(limit)
+    markets_result = await session.execute(markets_stmt)
+    markets = list(markets_result.scalars().all())
+    
+    result = []
+    for market in markets:
+        # Get latest snapshot for this market
+        snapshot_stmt = (
+            select(MarketSnapshot)
+            .where(MarketSnapshot.market_ticker == market.ticker)
+            .order_by(MarketSnapshot.timestamp.desc())
+            .limit(1)
+        )
+        snapshot_result = await session.execute(snapshot_stmt)
+        snapshot = snapshot_result.scalar_one_or_none()
+        
+        market_dict = {
+            "ticker": market.ticker,
+            "event_ticker": market.event_ticker,
+            "title": market.title,
+            "subtitle": market.subtitle or market.yes_sub_title,
+            "status": market.status,
+            "close_time": market.close_time.isoformat() if market.close_time else None,
+            "yes_price": snapshot.yes_bid if snapshot else 50,
+            "no_price": snapshot.no_bid if snapshot else 50,
+            "volume": snapshot.volume if snapshot else 0,
+            "volume_24h": snapshot.volume_24h if snapshot else 0,
+            "open_interest": snapshot.open_interest if snapshot else 0,
+        }
+        result.append(market_dict)
+    
+    return result
+
 # Snapshot Operations
 async def record_snapshot(session: AsyncSession, market_ticker: str, snapshot_data: dict) -> MarketSnapshot:
     data = snapshot_data.copy()

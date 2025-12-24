@@ -3,8 +3,7 @@ Kalshi News Tracker API
 Aggregates Kalshi prediction markets and matches them with relevant news.
 """
 
-from fastapi import FastAPI, HTTPException
-
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -13,15 +12,23 @@ import asyncio
 from dotenv import load_dotenv
 import os
 
-from kalshi_client import KalshiClient, calculate_market_heat, categorize_market
-from news_matcher import fetch_all_news, match_news_to_market, group_markets_by_topic, NewsArticle
+from kalshi_client import calculate_market_heat, categorize_market
+from news_matcher import match_news_to_market, group_markets_by_topic
 
 load_dotenv()
 
 from contextlib import asynccontextmanager
-from database import init_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from database import (
+    init_db, AsyncSessionLocal,
+    get_markets_with_snapshots, get_all_articles, get_recent_articles
+)
 from ingestion import ingest_kalshi_data
-import asyncio
+
+async def get_db_session():
+    """Dependency for getting async database session."""
+    async with AsyncSessionLocal() as session:
+        yield session
 
 async def background_ingestion_loop():
     """Run ingestion every 10 minutes."""
@@ -68,15 +75,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Cache for market and news data
-cache = {
-    "markets": None,
-    "news": None,
-    "topics": None,
-    "last_updated": None,
-}
-CACHE_TTL = timedelta(minutes=5)
-
 
 class TopicSummary(BaseModel):
     name: str
@@ -97,65 +95,6 @@ class MarketWithNews(BaseModel):
     heat_score: float
     close_time: Optional[str]
     related_news: list[dict]
-
-
-async def refresh_cache():
-    """Refresh cached data from Kalshi and news sources."""
-    api_key = os.getenv("KALSHI_API_KEY")
-    client = KalshiClient(api_key=api_key)
-    try:
-        # Fetch markets
-        markets = await client.get_all_open_markets(max_markets=300)
-        
-        # Add heat scores and categories
-        raw_markets = markets
-        markets = []
-        
-        # Deduplicate by title, keeping highest heat score
-        markets_by_title = {}
-        
-        for market in raw_markets:
-            market["heat_score"] = calculate_market_heat(market)
-            market["category"] = categorize_market(market)
-            
-            # Use yes_sub_title as subtitle if subtitle is missing (common in multi-outcome markets)
-            if not market.get("subtitle") and market.get("yes_sub_title"):
-                market["subtitle"] = market.get("yes_sub_title")
-            
-            title = market.get("title")
-            if title not in markets_by_title:
-                markets_by_title[title] = market
-            else:
-                # Keep the "hottest" variant (e.g. most active candidate)
-                if market["heat_score"] > markets_by_title[title]["heat_score"]:
-                    markets_by_title[title] = market
-        
-        markets = list(markets_by_title.values())
-        
-        # Fetch news
-        news = await fetch_all_news()
-        
-        # Group by topic
-        topics = group_markets_by_topic(markets)
-        
-        # Update cache
-        cache["markets"] = markets
-        cache["news"] = news
-        cache["topics"] = topics
-        cache["last_updated"] = datetime.now()
-        
-    finally:
-        await client.close()
-
-
-async def get_cached_data():
-    """Get cached data, refreshing if stale."""
-    if (
-        cache["last_updated"] is None
-        or datetime.now() - cache["last_updated"] > CACHE_TTL
-    ):
-        await refresh_cache()
-    return cache
 
 
 @app.get("/")
@@ -179,13 +118,21 @@ async def health_check():
 
 
 @app.get("/topics")
-async def get_topics():
+async def get_topics(session: AsyncSession = Depends(get_db_session)):
     """
     Get all topics/categories ranked by total market activity.
     Returns aggregated heat scores and top markets per topic.
     """
-    data = await get_cached_data()
-    topics = data["topics"]
+    # Get markets from database
+    markets = await get_markets_with_snapshots(session, limit=300)
+    
+    # Add heat scores and categories
+    for market in markets:
+        market["heat_score"] = calculate_market_heat(market)
+        market["category"] = categorize_market(market)
+    
+    # Group by topic
+    topics = group_markets_by_topic(markets)
     
     result = []
     for name, topic_data in topics.items():
@@ -208,22 +155,40 @@ async def get_topics():
     
     # Sort by total heat
     result.sort(key=lambda t: t["total_heat"], reverse=True)
-    return {"topics": result, "last_updated": cache["last_updated"].isoformat()}
+    return {"topics": result, "last_updated": datetime.now().isoformat()}
 
 
 @app.get("/markets")
-async def get_markets(
+async def get_markets_endpoint(
     category: Optional[str] = None,
     limit: int = 50,
     min_heat: float = 0,
+    session: AsyncSession = Depends(get_db_session),
 ):
     """
     Get markets sorted by heat score, optionally filtered by category.
     Includes matched news articles for each market.
     """
-    data = await get_cached_data()
-    markets = data["markets"]
-    news = data["news"]
+    # Get markets from database
+    markets = await get_markets_with_snapshots(session, limit=300)
+    news_articles = await get_recent_articles(session, hours=48)
+    
+    # Convert news articles to dict format for matching
+    news = [
+        {
+            "title": a.title,
+            "summary": a.summary,
+            "source": a.source,
+            "link": a.url,
+            "published": a.published_at.isoformat() if a.published_at else None,
+        }
+        for a in news_articles
+    ]
+    
+    # Add heat scores and categories
+    for market in markets:
+        market["heat_score"] = calculate_market_heat(market)
+        market["category"] = categorize_market(market)
     
     # Filter by category if specified
     if category:
@@ -256,51 +221,81 @@ async def get_markets(
     return {
         "markets": result,
         "count": len(result),
-        "last_updated": cache["last_updated"].isoformat(),
+        "last_updated": datetime.now().isoformat(),
     }
 
 
 @app.get("/markets/{ticker}")
-async def get_market(ticker: str):
+async def get_market_detail(ticker: str, session: AsyncSession = Depends(get_db_session)):
     """
     Get a specific market with detailed news matches.
     """
-    data = await get_cached_data()
-    markets = data["markets"]
-    news = data["news"]
+    from database import get_market
     
-    # Find the market
-    market = next((m for m in markets if m["ticker"] == ticker), None)
-    if not market:
+    market_obj = await get_market(session, ticker)
+    if not market_obj:
         raise HTTPException(status_code=404, detail="Market not found")
+    
+    # Get news for matching
+    news_articles = await get_recent_articles(session, hours=48)
+    news = [
+        {
+            "title": a.title,
+            "summary": a.summary,
+            "source": a.source,
+            "link": a.url,
+            "published": a.published_at.isoformat() if a.published_at else None,
+        }
+        for a in news_articles
+    ]
+    
+    market = {
+        "ticker": market_obj.ticker,
+        "title": market_obj.title,
+        "subtitle": market_obj.subtitle,
+        "status": market_obj.status,
+    }
+    market["category"] = categorize_market(market)
     
     # Get more news matches for single market view
     related_news = match_news_to_market(market, news, max_matches=10)
     
     return {
-        "ticker": market["ticker"],
-        "title": market["title"],
-        "subtitle": market.get("subtitle"),
+        "ticker": market_obj.ticker,
+        "title": market_obj.title,
+        "subtitle": market_obj.subtitle,
         "category": market.get("category"),
-        "yes_price": market.get("yes_price", 50),
-        "no_price": market.get("no_price", 50),
-        "volume": market.get("volume", 0),
-        "open_interest": market.get("open_interest", 0),
-        "heat_score": round(market.get("heat_score", 0), 2),
-        "close_time": market.get("close_time"),
-        "rules": market.get("rules"),
+        "close_time": market_obj.close_time.isoformat() if market_obj.close_time else None,
         "related_news": related_news,
     }
 
 
 @app.get("/hot")
-async def get_hot_markets(limit: int = 20):
+async def get_hot_markets(limit: int = 20, session: AsyncSession = Depends(get_db_session)):
     """
     Get the hottest markets right now - highest activity + most news coverage.
+    Data is read from the database.
     """
-    data = await get_cached_data()
-    markets = data["markets"]
-    news = data["news"]
+    # Get markets from database
+    markets = await get_markets_with_snapshots(session, limit=300)
+    news_articles = await get_recent_articles(session, hours=48)
+    
+    # Convert news articles to dict format for matching
+    news = [
+        {
+            "title": a.title,
+            "summary": a.summary,
+            "source": a.source,
+            "link": a.url,
+            "published": a.published_at.isoformat() if a.published_at else None,
+        }
+        for a in news_articles
+    ]
+    
+    # Add heat scores and categories
+    for market in markets:
+        market["heat_score"] = calculate_market_heat(market)
+        market["category"] = categorize_market(market)
     
     # Score markets by heat + news relevance
     scored_markets = []
@@ -330,15 +325,18 @@ async def get_hot_markets(limit: int = 20):
     
     return {
         "hot_markets": scored_markets[:limit],
-        "last_updated": cache["last_updated"].isoformat(),
+        "last_updated": datetime.now().isoformat(),
     }
 
 
 @app.post("/refresh")
 async def force_refresh():
-    """Force a cache refresh."""
-    await refresh_cache()
-    return {"status": "refreshed", "timestamp": cache["last_updated"].isoformat()}
+    """Force a data refresh by running ingestion."""
+    try:
+        await ingest_kalshi_data()
+        return {"status": "refreshed", "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
