@@ -284,7 +284,8 @@ def categorize_market(market: dict) -> str:
     """
     Categorize a market based on its category field and title keywords.
     """
-    category = market.get("category", "").lower()
+    category_val = market.get("category")
+    category = (category_val or "").lower()
     title = market.get("title", "").lower()
     
     # Map Kalshi categories to our simplified categories

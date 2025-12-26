@@ -4,11 +4,13 @@ import logging
 from datetime import datetime
 
 from kalshi_client import KalshiClient
-from news_matcher import fetch_all_news, match_news_to_market
+from news_matcher import (
+    fetch_all_news, match_news_to_market
+)
 from database import (
     AsyncSessionLocal, 
     upsert_series, upsert_event, upsert_market, upsert_article, 
-    link_article_to_events, record_snapshots_bulk,
+    link_article_to_events, 
     upsert_markets_bulk
 )
 from database import retention
@@ -35,17 +37,22 @@ async def ingest_kalshi_data():
             events = await client.get_all_events(max_events=200)
             now = datetime.utcnow()
             
-            # Extract unique series
-            series_tickers = set(e.get("series_ticker") for e in events if e.get("series_ticker"))
-            for ticker in series_tickers:
+            # Extract unique series and map a category to them (from any event in that series)
+            series_map = {} # ticker -> category
+            for e in events:
+                s_ticker = e.get("series_ticker")
+                if s_ticker and s_ticker not in series_map:
+                    series_map[s_ticker] = e.get("category")
+            
+            for ticker, category in series_map.items():
                 await upsert_series(session, {
                     "ticker": ticker, 
-                    "title": ticker, 
+                    "category": category,
                     "created_at": now, 
                     "updated_at": now
                 })
             await session.commit()
-            logger.info(f"Upserted {len(series_tickers)} series.")
+            logger.info(f"Upserted {len(series_map)} series.")
 
             db_events = []
             for e in events:
@@ -105,7 +112,7 @@ async def ingest_kalshi_data():
                     return datetime.fromisoformat(iso_str.replace('Z', '+00:00')).replace(tzinfo=None)
                     
                 db_markets.append({
-                    "ticker": m["ticker"],
+                    "market_ticker": m["ticker"],
                     "event_ticker": m["event_ticker"],
                     "title": m["title"],
                     "subtitle": m.get("subtitle", m.get("yes_sub_title")),
@@ -118,29 +125,23 @@ async def ingest_kalshi_data():
                     "expiration_time": parse_dt(m.get("expiration_time")),
                     "created_at": now,
                     "updated_at": now,
-                    "embedding": market_embeddings[idx]
-                })
-                
-                snapshots.append({
-                    "market_ticker": m["ticker"],
-                    "timestamp": now,
-                    "yes_bid": m.get("yes_bid"),
+                    "embedding": market_embeddings[idx],
+                    # Prices (flattened)
                     "yes_ask": m.get("yes_ask"),
-                    "no_bid": m.get("no_bid"),
                     "no_ask": m.get("no_ask"),
+                    "yes_bid": m.get("yes_bid"),
+                    "no_bid": m.get("no_bid"),
                     "last_price": m.get("last_price"),
                     "volume": m.get("volume"),
-                    "volume_24h": m.get("volume_24h"),
                     "open_interest": m.get("open_interest")
                 })
-
+                
             if db_markets:
                 logger.info(f"Attempting bulk upsert for {len(db_markets)} markets...")
                 try:
                     await upsert_markets_bulk(session, db_markets)
-                    await record_snapshots_bulk(session, snapshots)
                     await session.commit()
-                    logger.info(f"Successfully upserted markets and snapshots.")
+                    logger.info(f"Successfully upserted markets.")
                 except Exception as e:
                     logger.error(f"Bulk market upsert failed: {e}")
                     # Try item by item
@@ -151,7 +152,7 @@ async def ingest_kalshi_data():
                             await upsert_market(session, m_data)
                             await session.commit()
                         except Exception as m_e:
-                            logger.error(f"Failed to upsert market {m_data['ticker']}: {m_e}")
+                            logger.error(f"Failed to upsert market {m_data['market_ticker']}: {m_e}")
                             await session.rollback()
 
             # 3. News Ingestion
@@ -175,7 +176,7 @@ async def ingest_kalshi_data():
                     "title": item.title,
                     "summary": item.summary,
                     "source": item.source,
-                    "published_at": pub_at,
+                    "published_at": pub_at or now,
                     "fetched_at": now,
                     "embedding": news_embeddings[idx]
                 })

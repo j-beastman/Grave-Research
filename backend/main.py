@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import (
     init_db, AsyncSessionLocal,
-    get_markets_with_snapshots, get_all_articles, get_recent_articles
+    get_active_markets, get_all_articles, get_recent_articles
 )
 from ingestion import ingest_kalshi_data
 
@@ -85,7 +85,7 @@ class TopicSummary(BaseModel):
 
 
 class MarketWithNews(BaseModel):
-    ticker: str
+    market_ticker: str
     title: str
     subtitle: Optional[str]
     category: str
@@ -124,7 +124,7 @@ async def get_topics(session: AsyncSession = Depends(get_db_session)):
     Returns aggregated heat scores and top markets per topic.
     """
     # Get markets from database
-    markets = await get_markets_with_snapshots(session, limit=300)
+    markets = await get_active_markets(session, limit=300)
     
     # Add heat scores and categories
     for market in markets:
@@ -143,7 +143,7 @@ async def get_topics(session: AsyncSession = Depends(get_db_session)):
             "total_heat": round(topic_data["total_heat"], 2),
             "top_markets": [
                 {
-                    "ticker": m["ticker"],
+                    "market_ticker": m["market_ticker"],
                     "title": m["title"],
                     "yes_price": m.get("yes_price", 50),
                     "volume": m.get("volume", 0),
@@ -170,7 +170,7 @@ async def get_markets_endpoint(
     Includes matched news articles for each market.
     """
     # Get markets from database
-    markets = await get_markets_with_snapshots(session, limit=300)
+    markets = await get_active_markets(session, limit=300)
     news_articles = await get_recent_articles(session, hours=48)
     
     # Convert news articles to dict format for matching
@@ -205,7 +205,7 @@ async def get_markets_endpoint(
     for market in markets:
         related_news = match_news_to_market(market, news, max_matches=3)
         result.append({
-            "ticker": market["ticker"],
+            "market_ticker": market["market_ticker"],
             "title": market["title"],
             "subtitle": market.get("subtitle"),
             "category": market.get("category"),
@@ -250,7 +250,7 @@ async def get_market_detail(ticker: str, session: AsyncSession = Depends(get_db_
     ]
     
     market = {
-        "ticker": market_obj.ticker,
+        "market_ticker": market_obj.market_ticker,
         "title": market_obj.title,
         "subtitle": market_obj.subtitle,
         "status": market_obj.status,
@@ -261,7 +261,7 @@ async def get_market_detail(ticker: str, session: AsyncSession = Depends(get_db_
     related_news = match_news_to_market(market, news, max_matches=10)
     
     return {
-        "ticker": market_obj.ticker,
+        "market_ticker": market_obj.market_ticker,
         "title": market_obj.title,
         "subtitle": market_obj.subtitle,
         "category": market.get("category"),
@@ -271,13 +271,31 @@ async def get_market_detail(ticker: str, session: AsyncSession = Depends(get_db_
 
 
 @app.get("/hot")
-async def get_hot_markets(limit: int = 20, session: AsyncSession = Depends(get_db_session)):
+async def get_hot_markets(
+    limit: int = 20, 
+    category: Optional[str] = None,
+    min_heat: Optional[float] = None,
+    duration: Optional[str] = None,
+    session: AsyncSession = Depends(get_db_session)
+):
     """
     Get the hottest markets right now - highest activity + most news coverage.
-    Data is read from the database.
+    Supports filtering by category, minimum heat score, and duration.
     """
-    # Get markets from database
-    markets = await get_markets_with_snapshots(session, limit=300)
+    # Determine duration filter in days
+    max_days = None
+    if duration == "short":
+        max_days = 30
+    elif duration == "medium":
+        max_days = 90
+    
+    # Get markets from database with filters
+    markets = await get_active_markets(
+        session, 
+        limit=300,
+        category=category,
+        max_duration_days=max_days
+    )
     news_articles = await get_recent_articles(session, hours=48)
     
     # Convert news articles to dict format for matching
@@ -295,21 +313,26 @@ async def get_hot_markets(limit: int = 20, session: AsyncSession = Depends(get_d
     # Add heat scores and categories
     for market in markets:
         market["heat_score"] = calculate_market_heat(market)
-        market["category"] = categorize_market(market)
+        # category is now populated from DB join
     
     # Score markets by heat + news relevance
     scored_markets = []
     for market in markets:
+        # Apply min_heat filter
+        if min_heat and market["heat_score"] < min_heat:
+            continue
+            
         related_news = match_news_to_market(market, news, max_matches=5)
         news_score = sum(n["relevance_score"] for n in related_news)
         
         combined_score = market.get("heat_score", 0) + (news_score * 2)
         
         scored_markets.append({
-            "ticker": market["ticker"],
+            "market_ticker": market["market_ticker"],
             "event_ticker": market.get("event_ticker"),
             "title": market["title"],
-            "category": market.get("category"),
+            "subtitle": market.get("subtitle"),
+            "category": market.get("category") or "Other",
             "yes_price": market.get("yes_price", 50),
             "volume": market.get("volume", 0),
             "open_interest": market.get("open_interest", 0),

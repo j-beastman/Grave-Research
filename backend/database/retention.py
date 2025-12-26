@@ -29,35 +29,12 @@ async def cleanup_stale_data(session: AsyncSession):
     
     # 2. Cleanup old settled markets?
     # User said "purge markets that we don't want to keep anymore".
-    # Let's say settled > 90 days ago.
-    ninety_days_ago = datetime.utcnow() - timedelta(days=90)
-    
-    # We should delete their snapshots first due to FK? 
-    # Or rely on CASCADE if configured (SQLAlchemy usually expects manual or cascade).
-    # Since we didn't define CASCADE in models explicitly (default), we might need to delete snapshots first.
-    
-    # Find old markets
-    old_markets_stmt = select(Market.ticker).where(
-        Market.status == 'settled',
-        Market.expiration_time < ninety_days_ago
-    )
-    # Delete snapshots for them is hard without knowing exactly which ones.
-    # Ideally standard retention is 'delete snapshots older than X for ANY market' first.
-    
-    # Let's just implement Snapshot cleanup for now, keeping markets. 
-    # A market row is small. Snapshots are big.
-    
-    # Delete snapshots > 90 days
-    from .models import MarketSnapshot
-    snap_stmt = delete(MarketSnapshot).where(
-        MarketSnapshot.timestamp < ninety_days_ago
-    )
-    snap_result = await session.execute(snap_stmt)
-    deleted_snaps = snap_result.rowcount
+    # Since we removed snapshots, we just keep markets indefinitely or delete rows if very old.
+    # For now, let's just clean up news.
     
     await session.commit()
     
     return {
         "deleted_news": deleted_news,
-        "deleted_snapshots": deleted_snaps
+        "deleted_snapshots": 0
     }

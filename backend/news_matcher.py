@@ -20,28 +20,52 @@ class NewsArticle:
 
 
 # Major news RSS feeds organized by category
+# Major news RSS feeds organized by category
 NEWS_FEEDS = {
     "general": [
         ("Reuters", "https://feeds.reuters.com/reuters/topNews"),
         ("AP News", "https://rsshub.app/apnews/topics/apf-topnews"),
         ("NPR", "https://feeds.npr.org/1001/rss.xml"),
+        ("BBC World", "http://feeds.bbci.co.uk/news/world/rss.xml"),
+        ("CNN", "http://rss.cnn.com/rss/cnn_topstories.rss"),
+        ("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
     ],
     "politics": [
         ("Politico", "https://www.politico.com/rss/politicopicks.xml"),
         ("The Hill", "https://thehill.com/feed/"),
+        ("RealClearPolitics", "https://www.realclearpolitics.com/index.xml"),
+        ("CNN Politics", "http://rss.cnn.com/rss/cnn_allpolitics.rss"),
+        ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
     ],
     "economy": [
         ("WSJ Markets", "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain"),
         ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
         ("Bloomberg", "https://feeds.bloomberg.com/markets/news.rss"),
+        ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+        ("MarketWatch", "http://feeds.marketwatch.com/marketwatch/topstories/"),
     ],
     "technology": [
         ("TechCrunch", "https://techcrunch.com/feed/"),
         ("Ars Technica", "https://feeds.arstechnica.com/arstechnica/technology-lab"),
         ("The Verge", "https://www.theverge.com/rss/index.xml"),
+        ("Wired", "https://www.wired.com/feed/rss"),
+        ("Engadget", "https://www.engadget.com/rss.xml"),
+    ],
+    "science": [
+        ("ScienceDaily", "https://www.sciencedaily.com/rss/top_news.xml"),
+        ("NASA", "https://www.nasa.gov/rss/dyn/breaking_news.rss"),
+    ],
+    "crypto": [
+        ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+        ("CoinTelegraph", "https://cointelegraph.com/rss"),
     ],
     "sports": [
         ("ESPN", "https://www.espn.com/espn/rss/news"),
+        ("CBS Sports", "https://www.cbssports.com/rss/headlines/"),
+    ],
+    "entertainment": [
+        ("Variety", "https://variety.com/feed/"),
+        ("Hollywood Reporter", "https://www.hollywoodreporter.com/feed/"),
     ],
 }
 
@@ -61,6 +85,7 @@ def extract_keywords(text: str) -> set:
         "some", "any", "all", "both", "each", "few", "many", "much", "own",
         "same", "new", "first", "last", "long", "great", "little", "own",
         "market", "markets", "price", "prices", "higher", "lower", "yes", "no",
+        "year", "years", "today", "yesterday", "tomorrow", "week", "month",
     }
     
     # Clean and tokenize
@@ -101,7 +126,7 @@ async def fetch_news_from_feed(feed_url: str, source_name: str) -> list[NewsArti
         feed = feedparser.parse(feed_url)
         articles = []
         
-        for entry in feed.entries[:20]:  # Limit to 20 per feed
+        for entry in feed.entries[:50]:  # Limit to 50 per feed (Increased from 20)
             published = None
             if hasattr(entry, 'published_parsed') and entry.published_parsed:
                 try:

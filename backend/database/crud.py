@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from .models import Base, Series, Event, Market, MarketSnapshot, NewsArticle, ArticleEventLink
+from .models import Base, Series, Event, Market, NewsArticle, ArticleEventLink
 from .connection import engine
 
 async def init_db() -> None:
@@ -63,8 +63,8 @@ async def upsert_market(session: AsyncSession, market_data: dict) -> Market:
     
     stmt = pg_insert(Market).values(**clean_data)
     stmt = stmt.on_conflict_do_update(
-        index_elements=['ticker'],
-        set_={k: v for k, v in clean_data.items() if k != 'ticker'}
+        index_elements=['market_ticker'],
+        set_={k: v for k, v in clean_data.items() if k != 'market_ticker'}
     ).returning(Market)
     result = await session.execute(stmt)
     return result.scalar_one()
@@ -102,89 +102,81 @@ async def get_all_articles(session: AsyncSession, limit: int = 100) -> List[News
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
-async def get_markets_with_snapshots(session: AsyncSession, limit: int = 300) -> List[dict]:
-    """Get markets with their latest snapshot data for API responses."""
-    # Get markets
-    markets_stmt = select(Market).order_by(Market.updated_at.desc()).limit(limit)
-    markets_result = await session.execute(markets_stmt)
-    markets = list(markets_result.scalars().all())
+async def get_active_markets(
+    session: AsyncSession, 
+    limit: int = 300,
+    category: Optional[str] = None,
+    max_duration_days: Optional[int] = None
+) -> List[dict]:
+    """
+    Get active markets with optional filtering.
+    
+    Args:
+        limit: Max rows
+        category: Filter by category (Economy, Politics, etc.)
+        max_duration_days: If set, only show markets expiring within X days of opening (short-term)
+    """
+    # Base query joined with Event and Series
+    # We use COALESCE to get the effective category for filtering
+    effective_category = func.coalesce(Series.category, Event.category)
+    
+    stmt = (
+        select(Market, Event.category, Series.category)
+        .join(Event, Market.event_ticker == Event.event_ticker)
+        .outerjoin(Series, Event.series_ticker == Series.ticker)
+    )
+    
+    # Apply Filters
+    if category:
+        # Case-insensitive match? Our categories are capitalized (Politics, Economy). 
+        # Let's match exactly for performance or ILIKE if needed. 
+        # The frontend sends "Politics", "Economy".
+        stmt = stmt.where(effective_category == category)
+        
+    if max_duration_days:
+        # Filter markets where valid lifespan <= X days
+        # duration = expiration - open
+        # Postgres interval comparison
+        stmt = stmt.where(
+            (Market.expiration_time - Market.open_time) <= timedelta(days=max_duration_days)
+        )
+        
+    stmt = stmt.order_by(Market.updated_at.desc()).limit(limit)
+
+    markets_result = await session.execute(stmt)
+    rows = markets_result.all()
     
     result = []
-    for market in markets:
-        # Get latest snapshot for this market
-        snapshot_stmt = (
-            select(MarketSnapshot)
-            .where(MarketSnapshot.market_ticker == market.ticker)
-            .order_by(MarketSnapshot.timestamp.desc())
-            .limit(1)
-        )
-        snapshot_result = await session.execute(snapshot_stmt)
-        snapshot = snapshot_result.scalar_one_or_none()
+    for row in rows:
+        market = row[0]
+        event_category = row[1]
+        series_category = row[2]
+        
+        # Prefer series category, then event category
+        final_category = series_category or event_category
         
         market_dict = {
-            "ticker": market.ticker,
+            "market_ticker": market.market_ticker,
             "event_ticker": market.event_ticker,
             "title": market.title,
             "subtitle": market.subtitle or market.yes_sub_title,
+            "category": final_category,
             "status": market.status,
             "close_time": market.close_time.isoformat() if market.close_time else None,
-            "yes_price": snapshot.yes_bid if snapshot else 50,
-            "no_price": snapshot.no_bid if snapshot else 50,
-            "volume": snapshot.volume if snapshot else 0,
-            "volume_24h": snapshot.volume_24h if snapshot else 0,
-            "open_interest": snapshot.open_interest if snapshot else 0,
+            "yes_price": market.yes_ask if market.yes_ask is not None else 50,
+            "no_price": market.no_ask if market.no_ask is not None else 50,
+            "volume": market.volume or 0,
+            "open_interest": market.open_interest or 0,
+            # Pass original ask/bids if needed
+            "yes_ask": market.yes_ask,
+            "no_ask": market.no_ask,
+            "yes_bid": market.yes_bid,
+            "no_bid": market.no_bid,
         }
         result.append(market_dict)
     
     return result
 
-# Snapshot Operations
-async def record_snapshot(session: AsyncSession, market_ticker: str, snapshot_data: dict) -> MarketSnapshot:
-    data = snapshot_data.copy()
-    data['market_ticker'] = market_ticker
-    # Ensure timestamp
-    if 'timestamp' not in data:
-        data['timestamp'] = datetime.utcnow()
-        
-    snapshot = MarketSnapshot(**data)
-    session.add(snapshot)
-    await session.commit()
-    await session.refresh(snapshot)
-    return snapshot
-
-async def record_snapshots_bulk(session: AsyncSession, snapshots: List[dict]) -> int:
-    count = 0
-    now = datetime.utcnow()
-    for s in snapshots:
-        if 'timestamp' not in s:
-            s['timestamp'] = now
-        snapshot = MarketSnapshot(**s)
-        session.add(snapshot)
-        count += 1
-    return count
-
-async def get_market_history(
-    session: AsyncSession,
-    market_ticker: str,
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
-    interval: str = "1h"
-) -> List[MarketSnapshot]:
-    stmt = select(MarketSnapshot).where(MarketSnapshot.market_ticker == market_ticker)
-    
-    if start_time:
-        stmt = stmt.where(MarketSnapshot.timestamp >= start_time)
-    if end_time:
-        stmt = stmt.where(MarketSnapshot.timestamp <= end_time)
-        
-    stmt = stmt.order_by(MarketSnapshot.timestamp.asc())
-    
-    # Downsampling logic could go here (e.g. using date_trunc in SQL)
-    # For now returning raw rows as per schema simplicity, but 'interval' arg implies aggregation.
-    # In a real app we'd use time_bucket (TimescaleDB) or date_trunc.
-    
-    result = await session.execute(stmt)
-    return list(result.scalars().all())
 
 # News Operations
 async def upsert_article(session: AsyncSession, article_data: dict) -> NewsArticle:

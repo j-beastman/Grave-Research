@@ -15,7 +15,7 @@ class Series(Base):
     __tablename__ = "series"
 
     ticker: Mapped[str] = mapped_column(String(50), primary_key=True)
-    title: Mapped[Optional[str]] = mapped_column(String(255))
+    category: Mapped[Optional[str]] = mapped_column(String(100))
     description: Mapped[Optional[str]] = mapped_column(Text)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -44,7 +44,7 @@ class Event(Base):
 class Market(Base):
     __tablename__ = "markets"
 
-    ticker: Mapped[str] = mapped_column(String(50), primary_key=True)
+    market_ticker: Mapped[str] = mapped_column(String(50), primary_key=True)
     event_ticker: Mapped[str] = mapped_column(ForeignKey("events.event_ticker"))
     title: Mapped[Optional[str]] = mapped_column(String(500))
     subtitle: Mapped[Optional[str]] = mapped_column(String(500))
@@ -73,33 +73,22 @@ class Market(Base):
     # Vector embedding
     embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(384))
 
+    # Price Data (Flattened from obsolete snapshots)
+    yes_ask: Mapped[Optional[int]] = mapped_column(Integer)
+    no_ask: Mapped[Optional[int]] = mapped_column(Integer)
+    yes_bid: Mapped[Optional[int]] = mapped_column(Integer)
+    no_bid: Mapped[Optional[int]] = mapped_column(Integer)
+    last_price: Mapped[Optional[int]] = mapped_column(Integer)
+    volume: Mapped[Optional[int]] = mapped_column(Integer)
+    open_interest: Mapped[Optional[int]] = mapped_column(Integer)
+
     # Relationships
     event: Mapped["Event"] = relationship(back_populates="markets")
-    snapshots: Mapped[List["MarketSnapshot"]] = relationship(back_populates="market")
 
     __table_args__ = (
         Index("idx_markets_search", "search_vector", postgresql_using="gin"),
         Index("idx_markets_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_ops={"embedding": "vector_l2_ops"}),
     )
-
-class MarketSnapshot(Base):
-    __tablename__ = "market_snapshots"
-
-    market_ticker: Mapped[str] = mapped_column(ForeignKey("markets.ticker"), primary_key=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, primary_key=True)
-    
-    yes_bid: Mapped[Optional[int]] = mapped_column(Integer)
-    yes_ask: Mapped[Optional[int]] = mapped_column(Integer)
-    no_bid: Mapped[Optional[int]] = mapped_column(Integer)
-    no_ask: Mapped[Optional[int]] = mapped_column(Integer)
-    last_price: Mapped[Optional[int]] = mapped_column(Integer)
-    
-    volume: Mapped[Optional[int]] = mapped_column(Integer)
-    volume_24h: Mapped[Optional[int]] = mapped_column(Integer)
-    open_interest: Mapped[Optional[int]] = mapped_column(Integer)
-
-    # Relationships
-    market: Mapped["Market"] = relationship(back_populates="snapshots")
 
 class NewsArticle(Base):
     __tablename__ = "news_articles"

@@ -7,41 +7,41 @@ const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 //   topics: [
 //     {
 //       name: 'Politics', market_count: 45, total_volume: 2500000, total_heat: 89.5, top_markets: [
-//         { ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028 presidential election', yes_price: 34, volume: 450000, heat_score: 12.4 },
-//         { ticker: 'SENATE-GA', title: 'Republicans win Georgia Senate seat', yes_price: 62, volume: 180000, heat_score: 8.7 },
+//         { market_ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028 presidential election', yes_price: 34, volume: 450000, heat_score: 12.4 },
+//         { market_ticker: 'SENATE-GA', title: 'Republicans win Georgia Senate seat', yes_price: 62, volume: 180000, heat_score: 8.7 },
 //       ]
 //     },
 //     {
 //       name: 'Economy', market_count: 32, total_volume: 1800000, total_heat: 72.3, top_markets: [
-//         { ticker: 'FED-DEC-25', title: 'Fed cuts rates in December 2025', yes_price: 78, volume: 320000, heat_score: 11.2 },
-//         { ticker: 'RECESSION-2026', title: 'US recession by end of 2026', yes_price: 28, volume: 250000, heat_score: 9.1 },
+//         { market_ticker: 'FED-DEC-25', title: 'Fed cuts rates in December 2025', yes_price: 78, volume: 320000, heat_score: 11.2 },
+//         { market_ticker: 'RECESSION-2026', title: 'US recession by end of 2026', yes_price: 28, volume: 250000, heat_score: 9.1 },
 //       ]
 //     },
 //     {
 //       name: 'Technology', market_count: 18, total_volume: 950000, total_heat: 45.2, top_markets: [
-//         { ticker: 'OPENAI-IPO', title: 'OpenAI IPO by 2026', yes_price: 45, volume: 180000, heat_score: 7.8 },
+//         { market_ticker: 'OPENAI-IPO', title: 'OpenAI IPO by 2026', yes_price: 45, volume: 180000, heat_score: 7.8 },
 //       ]
 //     },
 //     {
 //       name: 'Sports', market_count: 28, total_volume: 720000, total_heat: 38.9, top_markets: [
-//         { ticker: 'SB-2026', title: 'Chiefs win Super Bowl 2026', yes_price: 18, volume: 95000, heat_score: 5.2 },
+//         { market_ticker: 'SB-2026', title: 'Chiefs win Super Bowl 2026', yes_price: 18, volume: 95000, heat_score: 5.2 },
 //       ]
 //     },
 //   ],
 //   hot_markets: [
 //     {
-//       ticker: 'FED-DEC-25', title: 'Fed cuts rates at December meeting', category: 'Economy', yes_price: 78, volume: 320000, heat_score: 11.2, combined_score: 18.4, related_news: [
+//       market_ticker: 'FED-DEC-25', title: 'Fed cuts rates at December meeting', category: 'Economy', yes_price: 78, volume: 320000, heat_score: 11.2, combined_score: 18.4, related_news: [
 //         { title: 'Fed officials signal openness to rate cuts amid cooling inflation', source: 'Reuters', relevance_score: 0.82 },
 //         { title: 'Markets price in 80% chance of December rate cut', source: 'CNBC', relevance_score: 0.75 },
 //       ]
 //     },
 //     {
-//       ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028', category: 'Politics', yes_price: 34, volume: 450000, heat_score: 12.4, combined_score: 16.8, related_news: [
+//       market_ticker: 'PRES-2028-DEM', title: 'Democratic nominee for 2028', category: 'Politics', yes_price: 34, volume: 450000, heat_score: 12.4, combined_score: 16.8, related_news: [
 //         { title: 'Early 2028 polling shows tight Democratic primary field', source: 'Politico', relevance_score: 0.68 },
 //       ]
 //     },
 //     {
-//       ticker: 'OPENAI-IPO', title: 'OpenAI announces IPO by end of 2026', category: 'Technology', yes_price: 45, volume: 180000, heat_score: 7.8, combined_score: 14.2, related_news: [
+//       market_ticker: 'OPENAI-IPO', title: 'OpenAI announces IPO by end of 2026', category: 'Technology', yes_price: 45, volume: 180000, heat_score: 7.8, combined_score: 14.2, related_news: [
 //         { title: 'OpenAI in talks for new funding round at $150B valuation', source: 'TechCrunch', relevance_score: 0.89 },
 //         { title: 'Sam Altman discusses potential public offering timeline', source: 'The Verge', relevance_score: 0.71 },
 //       ]
@@ -58,6 +58,10 @@ function App() {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
+  // Filter state
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [durationFilter, setDurationFilter] = useState('');
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -65,9 +69,14 @@ function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
+      // Build query params with filters
+      const params = new URLSearchParams({ limit: 15 });
+      if (categoryFilter) params.append('category', categoryFilter);
+      if (durationFilter) params.append('duration', durationFilter);
+
       const [topicsRes, hotRes] = await Promise.all([
         fetch(`${API_BASE}/topics`),
-        fetch(`${API_BASE}/hot?limit=15`),
+        fetch(`${API_BASE}/hot?${params.toString()}`),
       ]);
 
       if (!topicsRes.ok || !hotRes.ok) throw new Error('API unavailable');
@@ -153,7 +162,17 @@ function App() {
         {loading ? (
           <div style={styles.loading}>Loading markets...</div>
         ) : activeTab === 'hot' ? (
-          <HotMarketsView markets={hotMarkets} formatPrice={formatPrice} formatVolume={formatVolume} getHeatColor={getHeatColor} />
+          <HotMarketsView
+            markets={hotMarkets}
+            formatPrice={formatPrice}
+            formatVolume={formatVolume}
+            getHeatColor={getHeatColor}
+            categoryFilter={categoryFilter}
+            setCategoryFilter={setCategoryFilter}
+            durationFilter={durationFilter}
+            setDurationFilter={setDurationFilter}
+            onApplyFilters={fetchData}
+          />
         ) : (
           <TopicsView
             topics={topics}
@@ -177,7 +196,14 @@ function App() {
   );
 }
 
-function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor }) {
+function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor, categoryFilter, setCategoryFilter, durationFilter, setDurationFilter, onApplyFilters }) {
+  const categories = ['', 'Politics', 'Economy', 'Technology', 'Sports', 'Crypto', 'Entertainment', 'Weather', 'Science', 'Other'];
+  const durations = [
+    { value: '', label: 'All Durations' },
+    { value: 'short', label: 'Short Term (< 30 days)' },
+    { value: 'medium', label: 'Medium Term (< 90 days)' },
+  ];
+
   return (
     <div style={styles.hotContainer}>
       <div style={styles.sectionHeader}>
@@ -185,9 +211,35 @@ function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor }) {
         <p style={styles.sectionSubtitle}>Markets with the highest activity + news coverage</p>
       </div>
 
+      {/* Filter Bar */}
+      <div style={styles.filterBar}>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          style={styles.filterSelect}
+        >
+          <option value="">All Categories</option>
+          {categories.filter(c => c).map(cat => (
+            <option key={cat} value={cat}>{cat}</option>
+          ))}
+        </select>
+        <select
+          value={durationFilter}
+          onChange={(e) => setDurationFilter(e.target.value)}
+          style={styles.filterSelect}
+        >
+          {durations.map(d => (
+            <option key={d.value} value={d.value}>{d.label}</option>
+          ))}
+        </select>
+        <button onClick={onApplyFilters} style={styles.applyBtn}>
+          Apply Filters
+        </button>
+      </div>
+
       <div style={styles.marketGrid}>
         {markets.map((market, idx) => (
-          <div key={market.ticker} style={{ ...styles.marketCard, animationDelay: `${idx * 0.05}s` }}>
+          <div key={market.market_ticker} style={{ ...styles.marketCard, animationDelay: `${idx * 0.05}s` }}>
             <div style={styles.marketHeader}>
               <span style={styles.marketCategory}>{market.category}</span>
               <span style={{ ...styles.heatBadge, backgroundColor: getHeatColor(market.heat_score) }}>
@@ -196,6 +248,9 @@ function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor }) {
             </div>
 
             <h3 style={styles.marketTitle}>{market.title}</h3>
+            {market.subtitle && (
+              <p style={styles.marketSubtitle}>{market.subtitle}</p>
+            )}
 
             <div style={styles.priceRow}>
               <div style={styles.priceBox}>
@@ -225,7 +280,7 @@ function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor }) {
             )}
 
             <a
-              href={`https://kalshi.com/markets/${market.event_ticker || market.ticker}`}
+              href={`https://kalshi.com/markets/${market.event_ticker || market.market_ticker}`}
               target="_blank"
               rel="noopener noreferrer"
               style={styles.viewLink}
@@ -278,7 +333,7 @@ function TopicsView({ topics, selectedTopic, setSelectedTopic, formatPrice, form
             {selectedTopic === topic.name && topic.top_markets && (
               <div style={styles.topicMarkets}>
                 {topic.top_markets.map((m) => (
-                  <div key={m.ticker} style={styles.miniMarket}>
+                  <div key={m.market_ticker} style={styles.miniMarket}>
                     <span style={styles.miniTitle}>{m.title}</span>
                     <div style={styles.miniStats}>
                       <span style={{ color: m.yes_price > 50 ? '#4ade80' : '#f87171' }}>
@@ -408,6 +463,40 @@ const styles = {
     marginTop: '6px',
   },
   hotContainer: {},
+  filterBar: {
+    display: 'flex',
+    gap: '12px',
+    marginBottom: '24px',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  filterSelect: {
+    background: '#18181b',
+    color: '#e4e4e7',
+    border: '1px solid #3f3f46',
+    padding: '10px 14px',
+    borderRadius: '8px',
+    fontSize: '14px',
+    cursor: 'pointer',
+    minWidth: '180px',
+  },
+  applyBtn: {
+    background: '#22d3ee',
+    color: '#0a0a0f',
+    border: 'none',
+    padding: '10px 20px',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'background 0.2s',
+  },
+  marketSubtitle: {
+    color: '#71717a',
+    fontSize: '13px',
+    margin: '4px 0 12px 0',
+    fontStyle: 'italic',
+  },
   marketGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
