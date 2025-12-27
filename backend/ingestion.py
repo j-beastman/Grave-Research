@@ -34,7 +34,7 @@ async def ingest_kalshi_data():
         try:
             # 1. Fetch & Upsert Series/Events
             logger.info("Fetching events...")
-            events = await client.get_all_events(max_events=200)
+            events = await client.get_all_events(max_events=1000)
             now = datetime.utcnow()
             
             # Extract unique series and map a category to them (from any event in that series)
@@ -78,16 +78,66 @@ async def ingest_kalshi_data():
             # Upsert missing parent events first
             market_event_tickers = set(m.get("event_ticker") for m in markets if m.get("event_ticker"))
             logger.info(f"Checking {len(market_event_tickers)} event tickers from markets...")
-            for ticker in market_event_tickers:
-                try:
-                    await upsert_event(session, {
-                        "event_ticker": ticker, 
-                        "title": f"Event {ticker}",
-                        "created_at": now,
-                        "updated_at": now
-                    })
-                except Exception as e:
-                    logger.warning(f"Lazy event upsert failed for {ticker}: {e}")
+            
+            # Identify tickers we haven't already processed in this run
+            processed_tickers = set(e["event_ticker"] for e in events)
+            missing_tickers = market_event_tickers - processed_tickers
+            
+            if missing_tickers:
+                logger.info(f"Found {len(missing_tickers)} events missing from initial fetch. Fetching details...")
+                for ticker in missing_tickers:
+                    try:
+                        # Try to get real event details
+                        event_data = await client.get_event(ticker)
+                        event = event_data.get("event")
+                        
+                        if event:
+                            # Must upsert series first to satisfy FK
+                            if event.get("series_ticker"):
+                                await upsert_series(session, {
+                                    "ticker": event["series_ticker"],
+                                    "category": event.get("category"),
+                                    "created_at": now,
+                                    "updated_at": now
+                                })
+                            
+                            await upsert_event(session, {
+                                "event_ticker": event["event_ticker"], 
+                                "series_ticker": event.get("series_ticker"),
+                                "title": event.get("title"),
+                                "category": event.get("category"),
+                                "created_at": now,
+                                "updated_at": now
+                            })
+                        else:
+                            # Still fallback if API returns nothing (rare)
+                            await upsert_event(session, {
+                                "event_ticker": ticker, 
+                                "title": f"Event {ticker}",
+                                "created_at": now,
+                                "updated_at": now
+                            })
+                        # Commit per event to isolate failures
+                        await session.commit()
+                        
+                    except Exception as e:
+                        logger.warning(f"Lazy event upsert failed for {ticker}: {e}")
+                        await session.rollback()  # Reset transaction state
+                        
+                        # Minimal fallback to ensure foreign key constraints
+                        try:
+                             await upsert_event(session, {
+                                "event_ticker": ticker, 
+                                "title": f"Event {ticker}",
+                                "created_at": now,
+                                "updated_at": now
+                            })
+                             await session.commit()
+                        except Exception as fb_e:
+                            # If fallback fails, we must rollback again or next loop will fail
+                            logger.error(f"Fallback upsert failed for {ticker}: {fb_e}")
+                            await session.rollback()
+            
             await session.commit()
             logger.info("Manual event upsert complete.")
             
@@ -155,7 +205,36 @@ async def ingest_kalshi_data():
                             logger.error(f"Failed to upsert market {m_data['market_ticker']}: {m_e}")
                             await session.rollback()
 
-            # 3. News Ingestion
+            # 2b. Aggregate market data to events and compute heat scores
+            logger.info("Computing event-level heat scores...")
+            event_aggregates = {}
+            for m in db_markets:
+                event_ticker = m.get("event_ticker")
+                if not event_ticker:
+                    continue
+                if event_ticker not in event_aggregates:
+                    event_aggregates[event_ticker] = {"volume": 0, "open_interest": 0}
+                event_aggregates[event_ticker]["volume"] += m.get("volume") or 0
+                event_aggregates[event_ticker]["open_interest"] += m.get("open_interest") or 0
+            
+            # Calculate heat score for each event and update
+            for event_ticker, agg in event_aggregates.items():
+                volume = agg["volume"]
+                oi = agg["open_interest"]
+                # Heat formula: volume_score + oi_score (simplified event-level)
+                volume_score = min(volume / 10000, 15)  # Cap at 15
+                oi_score = min(oi / 5000, 10)  # Cap at 10
+                heat_score = volume_score + oi_score
+                
+                await upsert_event(session, {
+                    "event_ticker": event_ticker,
+                    "total_volume": volume,
+                    "total_open_interest": oi,
+                    "heat_score": round(heat_score, 2),
+                    "updated_at": now
+                })
+            await session.commit()
+            logger.info(f"Updated heat scores for {len(event_aggregates)} events.")
             logger.info("Fetching news...")
             news_items = await fetch_all_news()
             
@@ -164,6 +243,7 @@ async def ingest_kalshi_data():
             logger.info(f"Generating embeddings for {len(news_items)} articles...")
             news_embeddings = embed_service.generate(news_texts)
             
+            upserted_articles = []
             for idx, item in enumerate(news_items):
                 # Ensure published_at is naive if it's aware
                 pub_at = item.published
@@ -180,8 +260,16 @@ async def ingest_kalshi_data():
                     "fetched_at": now,
                     "embedding": news_embeddings[idx]
                 })
+                if article:
+                    upserted_articles.append(article)
                 
             await session.commit()
+            
+            # Link news to events via vector search
+            logger.info("Linking news to events...")
+            from news_matcher import match_articles_to_events
+            await match_articles_to_events(session, upserted_articles)
+            logger.info("News linking complete.")
             
             # 4. Retention Cleanup
             stats = await retention.cleanup_stale_data(session)

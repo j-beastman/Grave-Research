@@ -33,6 +33,11 @@ class Event(Base):
     category: Mapped[Optional[str]] = mapped_column(String(100))
     status: Mapped[Optional[str]] = mapped_column(String(20))
     
+    # Pre-computed aggregates (updated during ingestion)
+    heat_score: Mapped[Optional[float]] = mapped_column(Float, default=0)
+    total_volume: Mapped[Optional[int]] = mapped_column(Integer, default=0)
+    total_open_interest: Mapped[Optional[int]] = mapped_column(Integer, default=0)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -117,3 +122,4 @@ class ArticleEventLink(Base):
 
     # Relationships
     event: Mapped["Event"] = relationship(back_populates="article_links")
+    article: Mapped["NewsArticle"] = relationship()

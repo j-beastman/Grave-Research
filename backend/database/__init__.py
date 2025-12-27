@@ -6,7 +6,7 @@ from .crud import (
     upsert_series, get_series,
     upsert_event, get_event, get_events_by_series,
     upsert_market, upsert_markets_bulk, get_market, get_markets_by_event,
-    get_all_markets, get_all_articles, get_active_markets,
+    get_all_markets, get_all_articles, get_active_markets, get_hot_events,
     upsert_article, link_article_to_events, get_articles_for_event, get_recent_articles
 )
 from .search import search_markets
@@ -24,7 +24,7 @@ __all__ = [
     "upsert_series", "get_series",
     "upsert_event", "get_event", "get_events_by_series",
     "upsert_market", "upsert_markets_bulk", "get_market", "get_markets_by_event",
-    "get_all_markets", "get_all_articles", "get_active_markets",
+    "get_all_markets", "get_all_articles", "get_active_markets", "get_hot_events",
     "upsert_article", "link_article_to_events", "get_articles_for_event", "get_recent_articles",
     "search_markets"
 ]

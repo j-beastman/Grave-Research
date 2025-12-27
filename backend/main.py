@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import (
     init_db, AsyncSessionLocal,
-    get_active_markets, get_all_articles, get_recent_articles
+    get_active_markets, get_all_articles, get_recent_articles, get_hot_events
 )
 from ingestion import ingest_kalshi_data
 
@@ -34,13 +34,19 @@ async def background_ingestion_loop():
     """Run ingestion every 10 minutes."""
     while True:
         try:
-            print("Starting background ingestion...")
             await ingest_kalshi_data()
             print("Ingestion complete.")
+        except asyncio.CancelledError:
+            print("Ingestion cancelled.")
+            break
         except Exception as e:
             print(f"Ingestion error: {e}")
         
-        await asyncio.sleep(600)  # 10 minutes
+        try:
+            await asyncio.sleep(600)  # 10 minutes
+        except asyncio.CancelledError:
+            print("Sleep cancelled.")
+            break
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -267,6 +273,25 @@ async def get_market_detail(ticker: str, session: AsyncSession = Depends(get_db_
         "category": market.get("category"),
         "close_time": market_obj.close_time.isoformat() if market_obj.close_time else None,
         "related_news": related_news,
+    }
+
+
+@app.get("/hot-events")
+async def get_hot_events_endpoint(
+    limit: int = 15, 
+    category: Optional[str] = None,
+    session: AsyncSession = Depends(get_db_session)
+):
+    """
+    Get hottest events based on pre-computed heat scores.
+    Returns events with their nested markets.
+    This is faster than /hot because heat is pre-computed during ingestion.
+    """
+    events = await get_hot_events(session, limit=limit, category=category)
+    
+    return {
+        "hot_events": events,
+        "last_updated": datetime.now().isoformat(),
     }
 
 

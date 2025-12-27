@@ -249,3 +249,57 @@ def group_markets_by_topic(markets: list[dict]) -> dict[str, list[dict]]:
         topic["markets"].sort(key=lambda m: m["heat_score"], reverse=True)
     
     return topics
+
+
+async def match_articles_to_events(session, articles: list):
+    """
+    Match a list of news articles to events using vector similarity.
+    Strategy: 
+    1. For each article, search for closest Markets using embedding.
+    2. Aggregate market matches to their parent Event.
+    3. Create ArticleEventLink records.
+    """
+    from database import Market, ArticleEventLink
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert
+
+    if not articles:
+        return
+
+    # Process articles that have embeddings
+    for article in articles:
+        # Check for embedding being set and not empty (handle list or numpy array)
+        if hasattr(article, 'embedding') and article.embedding is not None and len(article.embedding) > 0:
+            pass
+        else:
+            continue
+            
+        # Vector search: Find top 3 closest markets
+        # Note: pgvector <-> operator is L2 distance. Smaller is better.
+        stmt = select(Market).order_by(
+            Market.embedding.l2_distance(article.embedding)
+        ).limit(3)
+        
+        result = await session.execute(stmt)
+        closest_markets = result.scalars().all()
+        
+        # Aggregate to events
+        event_scores = {}
+        for market in closest_markets:
+            if not market.event_ticker:
+                continue
+            
+            # Simple link: if article is close to a market, it's relevant to the event
+            event_scores[market.event_ticker] = 1.0 
+            
+        # Create/Update links
+        for event_ticker, score in event_scores.items():
+            link_stmt = insert(ArticleEventLink).values(
+                article_id=article.id,
+                event_ticker=event_ticker,
+                relevance_score=score
+            ).on_conflict_do_nothing()
+            
+            await session.execute(link_stmt)
+            
+    await session.commit()

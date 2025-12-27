@@ -52,7 +52,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 function App() {
   const [activeTab, setActiveTab] = useState('hot');
   const [topics, setTopics] = useState([]);
-  const [hotMarkets, setHotMarkets] = useState([]);
+  const [hotEvents, setHotEvents] = useState([]);
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -76,7 +76,7 @@ function App() {
 
       const [topicsRes, hotRes] = await Promise.all([
         fetch(`${API_BASE}/topics`),
-        fetch(`${API_BASE}/hot?${params.toString()}`),
+        fetch(`${API_BASE}/hot-events?${params.toString()}`),
       ]);
 
       if (!topicsRes.ok || !hotRes.ok) throw new Error('API unavailable');
@@ -85,7 +85,7 @@ function App() {
       const hotData = await hotRes.json();
 
       setTopics(topicsData.topics);
-      setHotMarkets(hotData.hot_markets);
+      setHotEvents(hotData.hot_events || []);
       setLastUpdated(new Date(topicsData.last_updated));
       setError(null);
     } catch (err) {
@@ -99,8 +99,9 @@ function App() {
     }
   };
 
-  const formatPrice = (price) => `${price}¢`;
+  const formatPrice = (price) => `${price}%`;
   const formatVolume = (vol) => {
+    if (!vol) return '$0';
     if (vol >= 1000000) return `$${(vol / 1000000).toFixed(1)}M`;
     if (vol >= 1000) return `$${(vol / 1000).toFixed(0)}K`;
     return `$${vol}`;
@@ -162,15 +163,13 @@ function App() {
         {loading ? (
           <div style={styles.loading}>Loading markets...</div>
         ) : activeTab === 'hot' ? (
-          <HotMarketsView
-            markets={hotMarkets}
+          <HotEventsView
+            events={hotEvents}
             formatPrice={formatPrice}
             formatVolume={formatVolume}
             getHeatColor={getHeatColor}
             categoryFilter={categoryFilter}
             setCategoryFilter={setCategoryFilter}
-            durationFilter={durationFilter}
-            setDurationFilter={setDurationFilter}
             onApplyFilters={fetchData}
           />
         ) : (
@@ -196,6 +195,106 @@ function App() {
   );
 }
 
+function HotEventsView({ events, formatPrice, formatVolume, getHeatColor, categoryFilter, setCategoryFilter, onApplyFilters }) {
+  const categories = ['', 'Politics', 'Economy', 'Technology', 'Sports', 'Crypto', 'Entertainment', 'Weather', 'Science', 'Other'];
+  const [expandedEvent, setExpandedEvent] = useState(null);
+
+  return (
+    <div style={styles.hotContainer}>
+      <div style={styles.sectionHeader}>
+        <h2 style={styles.sectionTitle}>Trending Events</h2>
+        <p style={styles.sectionSubtitle}>Events with the highest combined market activity</p>
+      </div>
+
+      {/* Filter Bar */}
+      <div style={styles.filterBar}>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          style={styles.filterSelect}
+        >
+          <option value="">All Categories</option>
+          {categories.filter(c => c).map(cat => (
+            <option key={cat} value={cat}>{cat}</option>
+          ))}
+        </select>
+        <button onClick={onApplyFilters} style={styles.applyBtn}>
+          Apply Filters
+        </button>
+      </div>
+
+      <div style={styles.eventGrid}>
+        {events.map((event, idx) => (
+          <div key={event.event_ticker} style={{ ...styles.eventCard, animationDelay: `${idx * 0.05}s` }}>
+            <div style={styles.eventHeader}>
+              <span style={styles.marketCategory}>{event.category}</span>
+              <span style={{ ...styles.heatBadge, backgroundColor: getHeatColor(event.heat_score) }}>
+                {event.heat_score.toFixed(1)} 🔥
+              </span>
+            </div>
+
+            <h3 style={styles.eventTitle}>{event.title}</h3>
+
+            {event.related_news && event.related_news.length > 0 && (
+              <div style={styles.newsSection}>
+                <span style={styles.newsLabel}>Recent News</span>
+                {event.related_news.map((news, nIdx) => (
+                  <div key={nIdx} style={styles.newsItem}>
+                    <span style={styles.newsSource}>{news.source}</span>
+                    <a href={news.link} target="_blank" rel="noopener noreferrer" style={styles.newsLink}>
+                      <p style={styles.newsTitle}>{news.title}</p>
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={styles.eventStats}>
+              <span>Volume: {formatVolume(event.total_volume)}</span>
+              <span style={{ marginLeft: '16px' }}>Markets: {event.markets?.length || 0}</span>
+            </div>
+
+            {/* Expandable Markets */}
+            <button
+              onClick={() => setExpandedEvent(expandedEvent === event.event_ticker ? null : event.event_ticker)}
+              style={styles.expandBtn}
+            >
+              {expandedEvent === event.event_ticker ? '▲ Hide Markets' : '▼ Show Markets'}
+            </button>
+
+            {expandedEvent === event.event_ticker && event.markets && (
+              <div style={styles.nestedMarkets}>
+                <div style={styles.nestedMarketHeaderRow}>
+                  <span style={styles.nestedHeaderTitle}>Market Outcome</span>
+                  <span style={styles.nestedHeaderPrice}>Likelihood</span>
+                </div>
+                {event.markets.map((market) => (
+                  <div key={market.market_ticker} style={styles.nestedMarketRow}>
+                    <span style={styles.nestedMarketTitle}>{market.subtitle || market.title}</span>
+                    <span style={{ ...styles.priceValue, color: market.yes_price > 50 ? '#4ade80' : '#f87171' }}>
+                      {formatPrice(market.yes_price)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <a
+              href={`https://kalshi.com/events/${event.event_ticker}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={styles.viewLink}
+            >
+              View on Kalshi →
+            </a>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Keep old HotMarketsView for backwards compatibility / fallback
 function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor, categoryFilter, setCategoryFilter, durationFilter, setDurationFilter, onApplyFilters }) {
   const categories = ['', 'Politics', 'Economy', 'Technology', 'Sports', 'Crypto', 'Entertainment', 'Weather', 'Science', 'Other'];
   const durations = [
@@ -238,12 +337,12 @@ function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor, cate
       </div>
 
       <div style={styles.marketGrid}>
-        {markets.map((market, idx) => (
+        {markets && markets.map((market, idx) => (
           <div key={market.market_ticker} style={{ ...styles.marketCard, animationDelay: `${idx * 0.05}s` }}>
             <div style={styles.marketHeader}>
               <span style={styles.marketCategory}>{market.category}</span>
-              <span style={{ ...styles.heatBadge, backgroundColor: getHeatColor(market.heat_score) }}>
-                {market.combined_score.toFixed(1)} 🔥
+              <span style={{ ...styles.heatBadge, backgroundColor: getHeatColor(market.heat_score || 0) }}>
+                {(market.combined_score || 0).toFixed(1)} 🔥
               </span>
             </div>
 
@@ -264,20 +363,6 @@ function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor, cate
                 <span style={styles.volumeValue}>{formatVolume(market.volume)}</span>
               </div>
             </div>
-
-            {market.related_news && market.related_news.length > 0 && (
-              <div style={styles.newsSection}>
-                <span style={styles.newsLabel}>Related News</span>
-                {market.related_news.slice(0, 2).map((news, nIdx) => (
-                  <div key={nIdx} style={styles.newsItem}>
-                    <span style={styles.newsSource}>{news.source}</span>
-                    <a href={news.link} target="_blank" rel="noopener noreferrer" style={styles.newsLink}>
-                      <p style={styles.newsTitle}>{news.title}</p>
-                    </a>
-                  </div>
-                ))}
-              </div>
-            )}
 
             <a
               href={`https://kalshi.com/markets/${market.event_ticker || market.market_ticker}`}
@@ -496,6 +581,87 @@ const styles = {
     fontSize: '13px',
     margin: '4px 0 12px 0',
     fontStyle: 'italic',
+  },
+  eventGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+    gap: '20px',
+  },
+  eventCard: {
+    background: 'linear-gradient(135deg, #18181b 0%, #0f0f12 100%)',
+    border: '1px solid #27272a',
+    borderRadius: '12px',
+    padding: '24px',
+    transition: 'all 0.2s',
+    animation: 'fadeIn 0.4s ease-out forwards',
+    opacity: 0,
+  },
+  eventHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '12px',
+  },
+  eventTitle: {
+    fontSize: '17px',
+    fontWeight: 600,
+    color: '#fafafa',
+    margin: '0 0 12px 0',
+    lineHeight: 1.4,
+  },
+  eventStats: {
+    color: '#71717a',
+    fontSize: '13px',
+    marginBottom: '12px',
+  },
+  expandBtn: {
+    background: '#27272a',
+    color: '#a1a1aa',
+    border: 'none',
+    padding: '8px 16px',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    width: '100%',
+    marginBottom: '12px',
+    transition: 'all 0.2s',
+  },
+  nestedMarkets: {
+    background: '#0f0f12',
+    borderRadius: '8px',
+    padding: '12px',
+    marginBottom: '12px',
+  },
+  nestedMarketHeaderRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: '11px',
+    color: '#71717a',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '8px',
+    paddingBottom: '4px',
+    borderBottom: '1px solid #27272a',
+  },
+  nestedHeaderTitle: {
+    flex: 1,
+  },
+  nestedHeaderPrice: {
+    width: '80px',
+    textAlign: 'right',
+  },
+  nestedMarketRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 0',
+    borderBottom: '1px solid #27272a',
+  },
+  nestedMarketTitle: {
+    color: '#d4d4d8',
+    fontSize: '13px',
+    flex: 1,
+    marginRight: '12px',
   },
   marketGrid: {
     display: 'grid',

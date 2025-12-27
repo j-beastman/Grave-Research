@@ -240,3 +240,92 @@ async def get_recent_articles(
     stmt = stmt.order_by(NewsArticle.published_at.desc())
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_hot_events(
+    session: AsyncSession, 
+    limit: int = 20,
+    category: Optional[str] = None,
+) -> List[dict]:
+    """
+    Get hot events sorted by heat_score, with their markets nested.
+    This is the new event-centric API for the hot markets page.
+    """
+    from sqlalchemy.orm import selectinload
+    
+    # Build base query
+    stmt = (
+        select(Event)
+        .options(
+            selectinload(Event.markets),
+            selectinload(Event.article_links).selectinload(ArticleEventLink.article)
+        )
+        .outerjoin(Series, Event.series_ticker == Series.ticker)
+    )
+    
+    # Apply category filter
+    if category:
+        effective_category = func.coalesce(Series.category, Event.category)
+        stmt = stmt.where(effective_category == category)
+    
+    # Order by pre-computed heat score
+    stmt = stmt.order_by(Event.heat_score.desc()).limit(limit)
+    
+    result = await session.execute(stmt)
+    events = result.scalars().unique().all()
+    
+    # Format response
+    hot_events = []
+    for event in events:
+        # Sort markets by likelihood (yes_ask price) descending
+        sorted_markets = sorted(
+            event.markets, 
+            key=lambda m: m.yes_ask if m.yes_ask is not None else 0, 
+            reverse=True
+        )
+
+        markets_list = []
+        for market in sorted_markets:
+            markets_list.append({
+                "market_ticker": market.market_ticker,
+                "title": market.title,
+                "subtitle": market.subtitle or market.yes_sub_title,
+                "yes_price": market.yes_ask if market.yes_ask is not None else 50,
+                "no_price": market.no_ask if market.no_ask is not None else 50,
+                "volume": market.volume or 0,
+                "open_interest": market.open_interest or 0,
+                "close_time": market.close_time.isoformat() if market.close_time else None,
+            })
+        
+        # Format linked news
+        related_news = []
+        if event.article_links:
+            # Sort by relevance or date? Let's do date for now (newest first)
+            sorted_links = sorted(
+                event.article_links, 
+                key=lambda l: l.article.published_at if l.article.published_at else datetime.min, 
+                reverse=True
+            )
+            
+            for link in sorted_links[:3]: # Limit to top 3 articles
+                art = link.article
+                related_news.append({
+                    "title": art.title,
+                    "source": art.source,
+                    "link": art.url,
+                    "published": art.published_at.isoformat() if art.published_at else None,
+                    "relevance_score": link.relevance_score
+                })
+
+        hot_events.append({
+            "event_ticker": event.event_ticker,
+            "title": event.title or event.event_ticker,
+            "category": event.category or "Other",
+            "heat_score": event.heat_score or 0,
+            "total_volume": event.total_volume or 0,
+            "total_open_interest": event.total_open_interest or 0,
+            "markets": markets_list,
+            "related_news": related_news
+        })
+    
+    return hot_events
