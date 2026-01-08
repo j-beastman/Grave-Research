@@ -160,6 +160,7 @@ async def ingest_kalshi_data():
                             await session.rollback()
             
             await session.commit()
+            logger.info("Manual event upsert complete.")
             
             # Upsert markets
             db_markets = []
@@ -167,14 +168,17 @@ async def ingest_kalshi_data():
             
             # Batch embedding generation for markets
             market_texts = [m["title"] for m in markets]
+            logger.info(f"Generating embeddings for {len(markets)} markets...")
             print(f"Generating embeddings for {len(markets)} markets (this may take a moment)...")
             market_embeddings = embed_service.generate(market_texts)
             print("Market embeddings generated.")
             
             for idx, m in enumerate(markets):
                 if not m.get("event_ticker"):
+                    logger.warning(f"Market {m['ticker']} has no event_ticker, skipping.")
                     continue
                 
+                # Strip timezone from ISO strings for naive TIMESTAMP columns
                 def parse_dt(iso_str):
                     if not iso_str: return None
                     return datetime.fromisoformat(iso_str.replace('Z', '+00:00')).replace(tzinfo=None)
@@ -194,6 +198,7 @@ async def ingest_kalshi_data():
                     "created_at": now,
                     "updated_at": now,
                     "embedding": market_embeddings[idx],
+                    # Prices (flattened)
                     "yes_ask": m.get("yes_ask"),
                     "no_ask": m.get("no_ask"),
                     "yes_bid": m.get("yes_bid"),
@@ -205,11 +210,16 @@ async def ingest_kalshi_data():
                 
             if db_markets:
                 print(f"Syncing {len(db_markets)} markets to database...")
+                logger.info(f"Attempting bulk upsert for {len(db_markets)} markets...")
                 try:
                     await upsert_markets_bulk(session, db_markets)
                     await session.commit()
+                    logger.info(f"Successfully upserted markets.")
                 except Exception as e:
+                    logger.error(f"Bulk market upsert failed: {e}")
+                    # Try item by item
                     await session.rollback()
+                    logger.info("Retrying markets one-by-one...")
                     for m_data in db_markets:
                         try:
                             await upsert_market(session, m_data)
@@ -220,6 +230,7 @@ async def ingest_kalshi_data():
 
             # 2b. Aggregate market data to events and compute heat scores
             print("Updating event heat scores...")
+            logger.info("Computing event-level heat scores...")
             event_aggregates = {}
             for m in db_markets:
                 event_ticker = m.get("event_ticker")
@@ -229,11 +240,13 @@ async def ingest_kalshi_data():
                 event_aggregates[event_ticker]["volume"] += m.get("volume") or 0
                 event_aggregates[event_ticker]["open_interest"] += m.get("open_interest") or 0
             
+            # Calculate heat score for each event and update
             for event_ticker, agg in event_aggregates.items():
                 volume = agg["volume"]
                 oi = agg["open_interest"]
-                volume_score = min(volume / 10000, 15)
-                oi_score = min(oi / 5000, 10)
+                # Heat formula: volume_score + oi_score (simplified event-level)
+                volume_score = volume / 10000
+                oi_score = oi / 5000  
                 heat_score = volume_score + oi_score
                 
                 await upsert_event(session, {
@@ -244,13 +257,14 @@ async def ingest_kalshi_data():
                     "updated_at": now
                 })
             await session.commit()
-
-            print("Fetching news articles...")
+            logger.info(f"Updated heat scores for {len(event_aggregates)} events.")
+            logger.info("Fetching news...")
             news_items = await fetch_all_news()
             
             # Generate embeddings for news
             news_texts = [item.title for item in news_items]
             print(f"Generating embeddings for {len(news_items)} news articles...")
+            logger.info(f"Generating embeddings for {len(news_items)} articles...")
             news_embeddings = embed_service.generate(news_texts)
             
             upserted_articles = []
@@ -276,13 +290,16 @@ async def ingest_kalshi_data():
             
             # Link news to events via vector search
             print("Linking news to events via vector search...")
+            logger.info("Linking news to events...")
             from news_matcher import match_articles_to_events
             await match_articles_to_events(session, upserted_articles)
             print("News linking complete.")
+            logger.info("News linking complete.")
 
             # 4. Retention Cleanup
             stats = await retention.cleanup_stale_data(session)
             print(f"Cleanup complete. Removed {stats.get('deleted_count', 0)} stale records.")
+            logger.info(f"Cleanup complete. Removed {stats.get('deleted_count', 0)} stale records.")
 
         except Exception as e:
             print(f"Ingestion failed: {e}")
