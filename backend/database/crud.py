@@ -96,9 +96,11 @@ async def get_all_markets(session: AsyncSession, status: Optional[str] = None, l
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
-async def get_all_articles(session: AsyncSession, limit: int = 100) -> List[NewsArticle]:
-    """Get all recent news articles."""
-    stmt = select(NewsArticle).order_by(NewsArticle.published_at.desc()).limit(limit)
+async def get_all_articles(session: AsyncSession, limit: int = None) -> List[NewsArticle]:
+    """Get all news articles. If limit is None, returns all articles."""
+    stmt = select(NewsArticle).order_by(NewsArticle.published_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
     result = await session.execute(stmt)
     return list(result.scalars().all())
 

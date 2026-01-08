@@ -17,9 +17,71 @@ class NewsArticle:
     source: str
     published: Optional[datetime]
     summary: str
+    embedding: Optional[list[float]] = None # Added for type hinting
+
+def extract_date_from_url(url: str) -> Optional[datetime]:
+    """Try to extract date from URL structure (e.g. /2023/12/25/)."""
+    # Pattern: YYYY/MM/DD or YYYY-MM-DD
+    match = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', url)
+    if match:
+        try:
+            year, month, day = map(int, match.groups())
+            return datetime(year, month, day)
+        except ValueError:
+            pass
+    return None
+
+async def fetch_news_from_feed(feed_url: str, source_name: str) -> list[NewsArticle]:
+    """Fetch news articles from a single RSS feed."""
+    try:
+        feed = feedparser.parse(feed_url)
+        articles = []
+        
+        for entry in feed.entries[:50]:  # Limit to 50 per feed
+            # Skip if no title
+            title = entry.get('title', '').strip()
+            if not title:
+                continue
+
+            published = None
+            # 1. Try parsed date
+            if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                try:
+                    published = datetime(*entry.published_parsed[:6])
+                except:
+                    pass
+            
+            # 2. Try URL date if missing
+            link = entry.get('link', '')
+            if not published and link:
+                published = extract_date_from_url(link)
+
+            # Summary fallback
+            summary = ""
+            if hasattr(entry, 'summary'):
+                summary = re.sub(r'<[^>]+>', '', entry.summary)[:300]
+            elif hasattr(entry, 'description'): # Fallback to description
+                summary = re.sub(r'<[^>]+>', '', entry.description)[:300]
+            
+            # Fallback to defaults
+            if not summary:
+                 # Start of content if available? No, keep empty.
+                 pass
+
+            articles.append(NewsArticle(
+                title=title,
+                link=link,
+                source=source_name,
+                published=published,
+                summary=summary,
+            ))
+        
+        return articles
+    except Exception as e:
+        print(f"Error fetching {source_name}: {e}")
+        return []
 
 
-# Major news RSS feeds organized by category
 # Major news RSS feeds organized by category
 NEWS_FEEDS = {
     "general": [
@@ -251,6 +313,14 @@ def group_markets_by_topic(markets: list[dict]) -> dict[str, list[dict]]:
     return topics
 
 
+# Helper to get category for a source
+def get_source_category(source_name: str) -> str:
+    for category, feeds in NEWS_FEEDS.items():
+        for name, url in feeds:
+            if name == source_name:
+                return category
+    return "general"
+
 async def match_articles_to_events(session, articles: list):
     """
     Match a list of news articles to events using vector similarity.
@@ -259,7 +329,7 @@ async def match_articles_to_events(session, articles: list):
     2. Aggregate market matches to their parent Event.
     3. Create ArticleEventLink records.
     """
-    from database import Market, ArticleEventLink
+    from database import Market, ArticleEventLink, Event, Series # Need Series/Event for category check if not on Market
     from sqlalchemy import select
     from sqlalchemy.dialects.postgresql import insert
 
@@ -273,24 +343,65 @@ async def match_articles_to_events(session, articles: list):
             pass
         else:
             continue
-            
+        
+        # Determine source category
+        source_cat = get_source_category(article.source)
+
         # Vector search: Find top 3 closest markets
-        # Note: pgvector <-> operator is L2 distance. Smaller is better.
-        stmt = select(Market).order_by(
-            Market.embedding.l2_distance(article.embedding)
-        ).limit(3)
+        # Note: pgvector <=> operator is Cosine Distance. Smaller is better.
+        distance_col = Market.embedding.cosine_distance(article.embedding).label("distance")
+        
+        # We need to join with Event/Series to check category if needed, 
+        # or just fetch market and check its category field (which we added to ingestion but maybe not model?)
+        # Market model doesn't have category column explicitly mapped in SQLAlchemy above, 
+        # but we do populate `category` in `upsert_series` and `upsert_event`.
+        # Let's join Event to get the category.
+        
+        stmt = (
+            select(Market, distance_col, Event.category)
+            .join(Event, Market.event_ticker == Event.event_ticker)
+            .order_by(distance_col)
+            .limit(5) # Fetch a few more to allow for filtering
+        )
         
         result = await session.execute(stmt)
-        closest_markets = result.scalars().all()
+        closest_markets_rows = result.all() # [(Market, distance, category), ...]
         
         # Aggregate to events
         event_scores = {}
-        for market in closest_markets:
+        for market, distance, event_category in closest_markets_rows:
             if not market.event_ticker:
                 continue
             
-            # Simple link: if article is close to a market, it's relevant to the event
-            event_scores[market.event_ticker] = 1.0 
+            # --- Category Filtering Logic ---
+            # If news is Sports, event MUST be Sports
+            if source_cat == "sports":
+                if not event_category or "Sports" not in event_category:
+                    continue
+            
+            # Conversely, strict sports events might only want sports news? 
+            # User only asked for: "sports news outlets should only match up to sports events"
+            # So if source != sports, it can match anything (e.g. general news about a game).
+            # --------------------------------
+
+            # Parse distance (it might be a float)
+            try:
+                dist = float(distance)
+            except:
+                dist = 1.0 # Fallback
+            
+            # Calculate similarity. 
+            # Cosine Distance = 1 - Cosine Similarity
+            # So Similarity = 1 - Distance
+            similarity = 1.0 - dist
+            
+            # Filter low relevance
+            if similarity < 0.2: 
+                continue
+
+            # Keep the max score for each event if multiple markets match
+            if market.event_ticker not in event_scores or similarity > event_scores[market.event_ticker]:
+                event_scores[market.event_ticker] = similarity
             
         # Create/Update links
         for event_ticker, score in event_scores.items():
@@ -298,7 +409,10 @@ async def match_articles_to_events(session, articles: list):
                 article_id=article.id,
                 event_ticker=event_ticker,
                 relevance_score=score
-            ).on_conflict_do_nothing()
+            ).on_conflict_do_update(
+                index_elements=['article_id', 'event_ticker'],
+                set_={"relevance_score": score, "matched_at": datetime.utcnow()}
+            )
             
             await session.execute(link_stmt)
             

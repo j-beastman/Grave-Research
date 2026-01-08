@@ -29,7 +29,7 @@ class Event(Base):
 
     event_ticker: Mapped[str] = mapped_column(String(50), primary_key=True)
     series_ticker: Mapped[Optional[str]] = mapped_column(ForeignKey("series.ticker"))
-    title: Mapped[Optional[str]] = mapped_column(String(500))
+    title: Mapped[Optional[str]] = mapped_column(Text)
     category: Mapped[Optional[str]] = mapped_column(String(100))
     status: Mapped[Optional[str]] = mapped_column(String(20))
     
@@ -51,8 +51,8 @@ class Market(Base):
 
     market_ticker: Mapped[str] = mapped_column(String(50), primary_key=True)
     event_ticker: Mapped[str] = mapped_column(ForeignKey("events.event_ticker"))
-    title: Mapped[Optional[str]] = mapped_column(String(500))
-    subtitle: Mapped[Optional[str]] = mapped_column(String(500))
+    title: Mapped[Optional[str]] = mapped_column(Text)
+    subtitle: Mapped[Optional[str]] = mapped_column(Text)
     yes_sub_title: Mapped[Optional[str]] = mapped_column(String(255))
     no_sub_title: Mapped[Optional[str]] = mapped_column(String(255))
     market_type: Mapped[Optional[str]] = mapped_column(String(20))
@@ -92,7 +92,7 @@ class Market(Base):
 
     __table_args__ = (
         Index("idx_markets_search", "search_vector", postgresql_using="gin"),
-        Index("idx_markets_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_ops={"embedding": "vector_l2_ops"}),
+        Index("idx_markets_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_ops={"embedding": "vector_cosine_ops"}),
     )
 
 class NewsArticle(Base):
@@ -109,7 +109,7 @@ class NewsArticle(Base):
     embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(384))
 
     __table_args__ = (
-        Index("idx_news_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_ops={"embedding": "vector_l2_ops"}),
+        Index("idx_news_embedding", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_ops={"embedding": "vector_cosine_ops"}),
     )
 
 class ArticleEventLink(Base):

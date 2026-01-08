@@ -61,10 +61,11 @@ class KalshiClient:
                 return response.json()
                 
             except httpx.HTTPStatusError as e:
-                # If we hit a rate limit and haven't exhausted retries
-                if e.response.status_code == 429 and attempt < max_retries:
+                # Retry on rate limits (429) or transient server errors (500, 502, 503, 504)
+                if (e.response.status_code == 429 or 500 <= e.response.status_code <= 504) and attempt < max_retries:
                     sleep_time = backoff_factor * (2 ** attempt) # Exponential backoff
-                    logger.warning(f"Rate limit hit for {endpoint}. Retrying in {sleep_time}s...")
+                    status_msg = "Rate limit hit" if e.response.status_code == 429 else f"Server error {e.response.status_code}"
+                    logger.warning(f"{status_msg} for {endpoint}. Retrying in {sleep_time}s (attempt {attempt+1}/{max_retries})...")
                     await asyncio.sleep(sleep_time)
                     continue
                 
@@ -104,22 +105,35 @@ class KalshiClient:
 
         return await self._request("GET", "/markets", params=params)
 
-    async def get_all_open_markets(self, max_markets: int = 500) -> list:
+    async def get_all_open_markets(self, max_markets: int = 5000) -> list:
         """Fetch all open markets with pagination."""
         all_markets = []
         cursor = None
+        page = 1
 
-        while len(all_markets) < max_markets:
+        while True:
             try:
+                logger.info(f"Fetching markets page {page} (cursor: {cursor})...")
                 data = await self.get_markets(status="open", limit=200, cursor=cursor)
                 markets = data.get("markets", [])
+                
                 if not markets:
+                    logger.info("No more markets found.")
                     break
+                    
                 all_markets.extend(markets)
+                logger.info(f"Received {len(markets)} markets (Total: {len(all_markets)})")
+                
                 cursor = data.get("cursor")
                 if not cursor:
+                    logger.info("Reached end of market pagination (no cursor).")
                     break
                 
+                if len(all_markets) >= max_markets:
+                    logger.warning(f"Reached max_markets limit ({max_markets}). Stopping.")
+                    break
+
+                page += 1
                 # Rate limit prevention: Sleep between pages
                 await asyncio.sleep(0.3)
                 
@@ -146,25 +160,35 @@ class KalshiClient:
             
         return await self._request("GET", "/events", params=params)
 
-    async def get_all_events(self, status: str = "open", max_events: int = 1000) -> List[dict]:
+    async def get_all_events(self, status: str = "open", max_events: int = 5000) -> List[dict]:
         """Fetch all events with pagination."""
         all_events = []
         cursor = None
+        page = 1
         
-        while len(all_events) < max_events:
+        while True:
             try:
+                logger.info(f"Fetching events page {page} (cursor: {cursor})...")
                 response = await self.get_events(status=status, limit=200, cursor=cursor)
                 events = response.get("events", [])
                 
                 if not events:
+                    logger.info("No more events found.")
                     break
                     
                 all_events.extend(events)
-                cursor = response.get("cursor")
+                logger.info(f"Received {len(events)} events (Total: {len(all_events)})")
                 
+                cursor = response.get("cursor")
                 if not cursor:
+                    logger.info("Reached end of event pagination (no cursor).")
                     break
                 
+                if len(all_events) >= max_events:
+                    logger.warning(f"Reached max_events limit ({max_events}). Stopping.")
+                    break
+
+                page += 1
                 # Rate limit prevention
                 await asyncio.sleep(0.3)
                 
@@ -283,25 +307,36 @@ def calculate_market_heat(market: dict) -> float:
 def categorize_market(market: dict) -> str:
     """
     Categorize a market based on its category field and title keywords.
+    Supported categories: Education, World, Economics, Elections, Sports, Social, 
+    Companies, Entertainment, Science and Technology, Health, Financials, 
+    Climate and Weather, Crypto, Transportation, Politics, Mentions.
     """
     category_val = market.get("category")
     category = (category_val or "").lower()
     title = market.get("title", "").lower()
     
-    # Map Kalshi categories to our simplified categories
+    # Map Kalshi categories to our specified categories
     category_map = {
         "politics": "Politics",
-        "economics": "Economy",
-        "financial": "Economy",
-        "fed": "Economy",
-        "climate": "Climate",
-        "weather": "Weather",
+        "economics": "Economics",
+        "economy": "Economics",
+        "financial": "Financials",
+        "fed": "Economics",
+        "climate": "Climate and Weather",
+        "weather": "Climate and Weather",
         "sports": "Sports",
         "entertainment": "Entertainment",
-        "tech": "Technology",
-        "science": "Science",
+        "tech": "Science and Technology",
+        "science": "Science and Technology",
         "crypto": "Crypto",
         "world": "World",
+        "education": "Education",
+        "elections": "Elections",
+        "social": "Social",
+        "companies": "Companies",
+        "health": "Health",
+        "transportation": "Transportation",
+        "mentions": "Mentions",
     }
     
     # Check category field first
@@ -311,13 +346,22 @@ def categorize_market(market: dict) -> str:
     
     # Fall back to title keyword matching
     title_keywords = {
-        "Politics": ["trump", "biden", "election", "congress", "senate", "president", "governor", "vote"],
-        "Economy": ["fed", "inflation", "gdp", "unemployment", "rate", "recession", "jobs", "cpi"],
-        "Weather": ["temperature", "hurricane", "rain", "snow", "weather", "storm"],
-        "Sports": ["nfl", "nba", "mlb", "super bowl", "championship", "game", "match"],
-        "Technology": ["ai", "openai", "google", "apple", "microsoft", "tech"],
-        "Crypto": ["bitcoin", "ethereum", "crypto", "btc", "eth"],
-        "Entertainment": ["oscar", "emmy", "movie", "film", "grammy", "album"],
+        "Politics": ["trump", "biden", "harris", "congress", "senate", "president", "governor", "white house", "policy"],
+        "Elections": ["election", "vote", "poll", "ballot", "primary", "nominee"],
+        "Economics": ["fed", "inflation", "gdp", "unemployment", "rate", "recession", "jobs", "cpi", "retail sales"],
+        "Financials": ["bank", "stock", "market", "nasdaq", "dow jaones", "yield", "bond"],
+        "Climate and Weather": ["temperature", "hurricane", "rain", "snow", "weather", "storm", "climate", "carbon", "heat"],
+        "Sports": ["nfl", "nba", "mlb", "super bowl", "championship", "game", "match", "team", "player"],
+        "Science and Technology": ["ai", "openai", "google", "apple", "microsoft", "tech", "software", "space", "launch", "chip"],
+        "Crypto": ["bitcoin", "ethereum", "crypto", "btc", "eth", "coinbase", "binance"],
+        "Entertainment": ["oscar", "emmy", "movie", "film", "grammy", "album", "box office", "actor", "music"],
+        "Health": ["covid", "fda", "drug", "health", "disease", "virus", "vaccine", "medical"],
+        "Companies": ["earnings", "revenue", "ipo", "company", "merger", "acquisition", "shares"],
+        "Transportation": ["flight", "airline", "ev", "tesla", "car", "train", "transport", "travel"],
+        "Education": ["school", "college", "university", "student", "tuition"],
+        "Social": ["population", "census", "crime", "demographics", "social"],
+        "World": ["china", "russia", "ukraine", "israel", "gaza", "middle east", "global", "foreign"],
+        "Mentions": ["mention", "tweet", "post", "says", "speaks"],
     }
     
     for cat, keywords in title_keywords.items():

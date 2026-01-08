@@ -196,7 +196,12 @@ function App() {
 }
 
 function HotEventsView({ events, formatPrice, formatVolume, getHeatColor, categoryFilter, setCategoryFilter, onApplyFilters }) {
-  const categories = ['', 'Politics', 'Economy', 'Technology', 'Sports', 'Crypto', 'Entertainment', 'Weather', 'Science', 'Other'];
+  const categories = [
+    '', 'Education', 'World', 'Economics', 'Elections', 'Sports', 'Social',
+    'Companies', 'Entertainment', 'Science and Technology', 'Health',
+    'Financials', 'Climate and Weather', 'Crypto', 'Transportation',
+    'Politics', 'Mentions', 'Other'
+  ];
   const [expandedEvent, setExpandedEvent] = useState(null);
 
   return (
@@ -240,10 +245,17 @@ function HotEventsView({ events, formatPrice, formatVolume, getHeatColor, catego
                 <span style={styles.newsLabel}>Recent News</span>
                 {event.related_news.map((news, nIdx) => (
                   <div key={nIdx} style={styles.newsItem}>
-                    <span style={styles.newsSource}>{news.source}</span>
-                    <a href={news.link} target="_blank" rel="noopener noreferrer" style={styles.newsLink}>
-                      <p style={styles.newsTitle}>{news.title}</p>
-                    </a>
+                    <div style={styles.newsContent}>
+                      <span style={styles.newsSource}>{news.source}</span>
+                      <a href={news.link} target="_blank" rel="noopener noreferrer" style={styles.newsLink}>
+                        <span style={styles.newsTitle}>{news.title}</span>
+                      </a>
+                    </div>
+                    {news.relevance_score && (
+                      <span style={styles.relevanceScore}>
+                        {(news.relevance_score * 100).toFixed(0)}% Match
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -296,7 +308,12 @@ function HotEventsView({ events, formatPrice, formatVolume, getHeatColor, catego
 
 // Keep old HotMarketsView for backwards compatibility / fallback
 function HotMarketsView({ markets, formatPrice, formatVolume, getHeatColor, categoryFilter, setCategoryFilter, durationFilter, setDurationFilter, onApplyFilters }) {
-  const categories = ['', 'Politics', 'Economy', 'Technology', 'Sports', 'Crypto', 'Entertainment', 'Weather', 'Science', 'Other'];
+  const categories = [
+    '', 'Education', 'World', 'Economics', 'Elections', 'Sports', 'Social',
+    'Companies', 'Entertainment', 'Science and Technology', 'Health',
+    'Financials', 'Climate and Weather', 'Crypto', 'Transportation',
+    'Politics', 'Mentions', 'Other'
+  ];
   const durations = [
     { value: '', label: 'All Durations' },
     { value: 'short', label: 'Short Term (< 30 days)' },
@@ -626,6 +643,16 @@ const styles = {
     marginBottom: '12px',
     transition: 'all 0.2s',
   },
+  relevanceScore: {
+    fontSize: '0.7rem',
+    fontWeight: '600',
+    color: '#059669', // Emerald 600
+    backgroundColor: '#d1fae5', // Emerald 100
+    padding: '2px 6px',
+    borderRadius: '4px',
+    whiteSpace: 'nowrap',
+    marginTop: '2px',
+  },
   nestedMarkets: {
     background: '#0f0f12',
     borderRadius: '8px',
@@ -770,16 +797,25 @@ const styles = {
   },
   newsItem: {
     marginBottom: '10px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '12px',
+  },
+  newsContent: {
+    flex: 1,
   },
   newsSource: {
     fontSize: '11px',
     color: '#a78bfa',
     fontWeight: 600,
+    display: 'block',
+    marginBottom: '2px',
   },
   newsTitle: {
     fontSize: '13px',
     color: '#a1a1aa',
-    margin: '2px 0 0 0',
+    margin: 0,
     lineHeight: 1.4,
     transition: 'color 0.2s',
   },

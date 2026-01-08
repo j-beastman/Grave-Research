@@ -176,40 +176,36 @@ async def get_markets_endpoint(
     Includes matched news articles for each market.
     """
     # Get markets from database
-    markets = await get_active_markets(session, limit=300)
-    news_articles = await get_recent_articles(session, hours=48)
-    
-    # Convert news articles to dict format for matching
-    news = [
-        {
-            "title": a.title,
-            "summary": a.summary,
-            "source": a.source,
-            "link": a.url,
-            "published": a.published_at.isoformat() if a.published_at else None,
-        }
-        for a in news_articles
-    ]
+    markets = await get_active_markets(session, limit=limit, category=category)
     
     # Add heat scores and categories
     for market in markets:
         market["heat_score"] = calculate_market_heat(market)
         market["category"] = categorize_market(market)
     
-    # Filter by category if specified
-    if category:
-        markets = [m for m in markets if m.get("category", "").lower() == category.lower()]
-    
     # Filter by minimum heat
     markets = [m for m in markets if m.get("heat_score", 0) >= min_heat]
     
     # Sort by heat and limit
-    markets = sorted(markets, key=lambda m: m.get("heat_score", 0), reverse=True)[:limit]
+    markets = sorted(markets, key=lambda m: m.get("heat_score", 0), reverse=True)
     
-    # Add news matches
+    # Add pre-computed news matches from database
+    from database import get_articles_for_event
     result = []
-    for market in markets:
-        related_news = match_news_to_market(market, news, max_matches=3)
+    for market in markets[:limit]: # Apply limit after filtering and sorting
+        articles = await get_articles_for_event(session, market["event_ticker"], limit=3)
+        related_news = [
+            {
+                "title": a.title,
+                "summary": a.summary,
+                "source": a.source,
+                "link": a.url,
+                "published": a.published_at.isoformat() if a.published_at else None,
+                "relevance_score": getattr(a, "relevance_score", 0.5) # Fallback if direct link not returned
+            }
+            for a in articles
+        ]
+        
         result.append({
             "market_ticker": market["market_ticker"],
             "title": market["title"],
@@ -242,29 +238,21 @@ async def get_market_detail(ticker: str, session: AsyncSession = Depends(get_db_
     if not market_obj:
         raise HTTPException(status_code=404, detail="Market not found")
     
-    # Get news for matching
-    news_articles = await get_recent_articles(session, hours=48)
-    news = [
+    # Get news from ArticleEventLink (vector matches)
+    from database import get_articles_for_event
+    articles = await get_articles_for_event(session, market_obj.event_ticker, limit=10)
+    
+    related_news = [
         {
             "title": a.title,
             "summary": a.summary,
             "source": a.source,
             "link": a.url,
             "published": a.published_at.isoformat() if a.published_at else None,
+            "relevance_score": getattr(a, "relevance_score", 0.5)
         }
-        for a in news_articles
+        for a in articles
     ]
-    
-    market = {
-        "market_ticker": market_obj.market_ticker,
-        "title": market_obj.title,
-        "subtitle": market_obj.subtitle,
-        "status": market_obj.status,
-    }
-    market["category"] = categorize_market(market)
-    
-    # Get more news matches for single market view
-    related_news = match_news_to_market(market, news, max_matches=10)
     
     return {
         "market_ticker": market_obj.market_ticker,
@@ -341,13 +329,26 @@ async def get_hot_markets(
         # category is now populated from DB join
     
     # Score markets by heat + news relevance
+    from database import get_articles_for_event
     scored_markets = []
     for market in markets:
         # Apply min_heat filter
         if min_heat and market["heat_score"] < min_heat:
             continue
             
-        related_news = match_news_to_market(market, news, max_matches=5)
+        articles = await get_articles_for_event(session, market["event_ticker"], limit=5)
+        related_news = [
+            {
+                "title": a.title,
+                "summary": a.summary,
+                "source": a.source,
+                "link": a.url,
+                "published": a.published_at.isoformat() if a.published_at else None,
+                "relevance_score": getattr(a, "relevance_score", 0.5)
+            }
+            for a in articles
+        ]
+        
         news_score = sum(n["relevance_score"] for n in related_news)
         
         combined_score = market.get("heat_score", 0) + (news_score * 2)
